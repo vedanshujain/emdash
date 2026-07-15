@@ -438,6 +438,55 @@ export class PluginBridge extends WorkerEntrypoint<PluginBridgeEnv, PluginBridge
 		return deleted;
 	}
 
+	/**
+	 * Insert-once. Delegates to PluginStorageRepository (same single-statement
+	 * `INSERT … ON CONFLICT DO NOTHING` + unique-violation classification as the
+	 * in-process and workerd paths) so the D1 production sandbox behaves
+	 * identically.
+	 */
+	async storageInsert(collection: string, id: string, data: unknown): Promise<unknown> {
+		const { storageCollections } = this.ctx.props;
+		if (!storageCollections.includes(collection)) {
+			throw new Error(`Storage collection not declared: ${collection}`);
+		}
+		return this.getStorageRepo(collection).insert(id, data);
+	}
+
+	/**
+	 * Predicate-guarded atomic update. Delegates to PluginStorageRepository so
+	 * the guarded single-statement `UPDATE … RETURNING` (the no-oversell
+	 * primitive) runs identically on the D1 production path. D1 serializes
+	 * writes, so concurrent guarded decrements can never oversell.
+	 */
+	async storageUpdateIf(
+		collection: string,
+		id: string,
+		args: { where?: unknown; set?: unknown; delta?: unknown },
+	): Promise<unknown> {
+		const { storageCollections } = this.ctx.props;
+		if (!storageCollections.includes(collection)) {
+			throw new Error(`Storage collection not declared: ${collection}`);
+		}
+		// Validate the guard/patch shapes up front (symmetric with the workerd
+		// bridge's requireRecord/optionalRecord) so a malformed call fails with a
+		// clean error rather than an incidental repo throw.
+		if (!isJsonObject(args.where)) {
+			throw new Error("storage/updateIf requires an object `where`");
+		}
+		if (args.set !== undefined && !isJsonObject(args.set)) {
+			throw new Error("storage/updateIf `set` must be an object when provided");
+		}
+		if (args.delta !== undefined && !isJsonObject(args.delta)) {
+			throw new Error("storage/updateIf `delta` must be an object when provided");
+		}
+		return this.getStorageRepo(collection).updateIf(id, {
+			// eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- WhereClause is structurally Record<string, WhereValue>; validated as an object above and re-validated by the repo.
+			where: args.where as never,
+			set: args.set,
+			delta: args.delta,
+		});
+	}
+
 	// =========================================================================
 	// Content Operations - capability-gated
 	// =========================================================================

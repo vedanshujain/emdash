@@ -430,6 +430,72 @@ describe("Bridge Handler Conformance", () => {
 			expect(result.result).toEqual({ message: "hello", level: "info" });
 		});
 
+		it("insert over the bridge: first { inserted: true }, replay { inserted: false, reason: 'exists' }", async () => {
+			const handler = makeHandler({ storageCollections: ["items"] });
+			const first = await call(handler, "storage/insert", {
+				collection: "items",
+				id: "x1",
+				data: { stock: 5 },
+			});
+			expect(first.result).toEqual({ inserted: true });
+
+			const replay = await call(handler, "storage/insert", {
+				collection: "items",
+				id: "x1",
+				data: { stock: 999 },
+			});
+			expect(replay.result).toEqual({ inserted: false, reason: "exists" });
+
+			// Original row untouched.
+			const got = await call(handler, "storage/get", { collection: "items", id: "x1" });
+			expect(got.result).toEqual({ stock: 5 });
+		});
+
+		it("updateIf over the bridge: guard-pass applies a delta decrement (round-trips through JSON), guard-fail no-ops", async () => {
+			const handler = makeHandler({ storageCollections: ["items"] });
+			await call(handler, "storage/insert", { collection: "items", id: "x1", data: { stock: 1 } });
+
+			// The { dec: 1 } delta object must survive JSON transport and be
+			// detected as a delta on the far side.
+			const pass = await call(handler, "storage/updateIf", {
+				collection: "items",
+				id: "x1",
+				where: { stock: { gte: 1 } },
+				delta: { stock: { dec: 1 } },
+			});
+			expect(pass.result).toEqual({ applied: true, data: { stock: 0 } });
+
+			// Now stock is 0 → guard fails, no-op.
+			const fail = await call(handler, "storage/updateIf", {
+				collection: "items",
+				id: "x1",
+				where: { stock: { gte: 1 } },
+				delta: { stock: { dec: 1 } },
+			});
+			expect(fail.result).toEqual({ applied: false });
+
+			const got = await call(handler, "storage/get", { collection: "items", id: "x1" });
+			expect(got.result).toEqual({ stock: 0 });
+		});
+
+		it("rejects insert/updateIf on an undeclared collection", async () => {
+			const handler = makeHandler({ storageCollections: ["items"] });
+			const ins = await call(handler, "storage/insert", {
+				collection: "secrets",
+				id: "1",
+				data: {},
+			});
+			expect(ins.error).toContain("Storage collection not declared: secrets");
+
+			const upd = await call(handler, "storage/updateIf", {
+				collection: "secrets",
+				id: "1",
+				where: {},
+				set: { a: 1 },
+			});
+			expect(upd.error).toContain("Storage collection not declared: secrets");
+		});
+
 		it("storage is scoped per plugin", async () => {
 			const handlerA = createBridgeHandler({
 				pluginId: "plugin-a",

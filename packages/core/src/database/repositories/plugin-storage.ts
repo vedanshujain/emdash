@@ -16,16 +16,57 @@ import {
 	validateOrderByClause,
 	getIndexedFields,
 	jsonOrderExtract,
+	isInFilter,
 } from "../../plugins/storage-query.js";
 import type {
 	StorageCollection,
 	QueryOptions,
 	PaginatedResult,
 	WhereClause,
+	InsertResult,
+	UpdateIfArgs,
+	UpdateIfResult,
 } from "../../plugins/types.js";
+import { pluginDataWriteExpr } from "../dialect-helpers.js";
 import { withTransaction } from "../transaction.js";
 import type { Database } from "../types.js";
 import { encodeCursor, decodeCursor } from "./types.js";
+
+/**
+ * Classify a thrown DB error as a UNIQUE-constraint violation, returning the
+ * offending index name when the driver exposes it.
+ *
+ * - **Postgres** (`pg`): SQLSTATE `23505`; `error.constraint` carries the index
+ *   name.
+ * - **SQLite / D1** (better-sqlite3): `error.code === "SQLITE_CONSTRAINT_UNIQUE"`
+ *   or a message `UNIQUE constraint failed: index 'uidx_…'`. Our unique indexes
+ *   are partial EXPRESSION indexes, so the message names the index, not a column.
+ *
+ * Returns `null` for anything that is not a unique violation (the caller
+ * re-throws those — raw DB errors are never swallowed).
+ */
+const UNIQUE_CONSTRAINT_MESSAGE_RE = /UNIQUE constraint failed/i;
+const SQLITE_INDEX_NAME_RE = /index ['"]([^'"]+)['"]/;
+const SAFE_FIELD_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_]*$/;
+
+function classifyUniqueViolation(error: unknown): { indexName?: string } | null {
+	if (typeof error !== "object" || error === null) return null;
+	const e = error as { code?: unknown; constraint?: unknown; message?: unknown };
+	if (e.code === "23505") {
+		return { indexName: typeof e.constraint === "string" ? e.constraint : undefined };
+	}
+	const message = typeof e.message === "string" ? e.message : "";
+	if (e.code === "SQLITE_CONSTRAINT_UNIQUE" || UNIQUE_CONSTRAINT_MESSAGE_RE.test(message)) {
+		const match = SQLITE_INDEX_NAME_RE.exec(message);
+		return { indexName: match?.[1] };
+	}
+	return null;
+}
+
+/** True for any non-null object that may carry `inc`/`dec` delta keys. */
+function isDeltaLike(value: unknown): value is { inc?: unknown; dec?: unknown } {
+	return typeof value === "object" && value !== null;
+}
 
 /**
  * Turn a `buildWhereClause` result (`?`-placeholder SQL + ordered params) into a
@@ -318,6 +359,176 @@ export class PluginStorageRepository<T = unknown> implements StorageCollection<T
 		// Postgres returns COUNT(*) (bigint) as a string via node-postgres; coerce
 		// so this always satisfies its Promise<number> contract on both dialects.
 		return Number(result?.count ?? 0);
+	}
+
+	/**
+	 * Insert-once (see {@link StorageCollection.insert}).
+	 *
+	 * Single `INSERT … ON CONFLICT (plugin_id, collection, id) DO NOTHING`. The
+	 * conflict target is the primary key, so a same-`id` collision is swallowed
+	 * (0 rows affected → `{ inserted: false, reason: "exists" }`). A collision on
+	 * a declared partial UNIQUE expression index is NOT the conflict target, so
+	 * the statement throws — we classify that as `unique_violation` and re-throw
+	 * anything else.
+	 */
+	async insert(id: string, data: T): Promise<InsertResult> {
+		const now = new Date().toISOString();
+		const jsonData = JSON.stringify(data);
+
+		try {
+			const result = await this.db
+				.insertInto("_plugin_storage")
+				.values({
+					plugin_id: this.pluginId,
+					collection: this.collection,
+					id,
+					data: jsonData,
+					created_at: now,
+					updated_at: now,
+				})
+				.onConflict((oc) => oc.columns(["plugin_id", "collection", "id"]).doNothing())
+				.executeTakeFirst();
+
+			const inserted = (result.numInsertedOrUpdatedRows ?? 0n) > 0n;
+			if (inserted) return { inserted: true };
+			return { inserted: false, reason: "exists" };
+		} catch (error) {
+			const classified = classifyUniqueViolation(error);
+			if (!classified) throw error;
+			const conflictField = await this.recoverConflictField(classified.indexName);
+			return conflictField
+				? { inserted: false, reason: "unique_violation", conflictField }
+				: { inserted: false, reason: "unique_violation" };
+		}
+	}
+
+	/**
+	 * Predicate-guarded atomic update (see {@link StorageCollection.updateIf}).
+	 *
+	 * One guarded `UPDATE _plugin_storage SET data = <json_set/jsonb_set expr>,
+	 * updated_at = ? WHERE <pk> AND <guard> RETURNING data`. The guard reuses
+	 * PR A's numeric-correct `buildWhereClause` translation verbatim, and the
+	 * `set`/`delta` arithmetic is computed in-SQL — no read-then-write — which is
+	 * what makes N concurrent guarded decrements correct (no oversell).
+	 *
+	 * `applied` is derived from whether a `RETURNING` row came back (equivalently
+	 * rows-affected > 0). A missing row and a failed guard both yield 0 rows →
+	 * `{ applied: false }`; the two are intentionally indistinguishable. Never
+	 * inserts.
+	 */
+	async updateIf(id: string, args: UpdateIfArgs<T>): Promise<UpdateIfResult<T>> {
+		const { where, set, delta } = args;
+
+		const setEntries: Array<[string, unknown]> = set ? Object.entries(set) : [];
+		const hasSet = setEntries.length > 0;
+		const hasDelta = delta !== undefined && Object.keys(delta).length > 0;
+
+		if (!hasSet && !hasDelta) {
+			throw new Error("updateIf requires at least one of `set` or `delta`.");
+		}
+
+		// Build the signed integer deltas, enforcing integer-only at runtime.
+		const deltaEntries: Array<[string, number]> = [];
+		if (hasDelta) {
+			const setFieldSet = new Set(setEntries.map(([field]) => field));
+			for (const [field, spec] of Object.entries(delta)) {
+				if (spec === undefined) continue;
+				if (setFieldSet.has(field)) {
+					throw new Error(`updateIf: field "${field}" appears in both \`set\` and \`delta\`.`);
+				}
+				if (!isDeltaLike(spec)) {
+					throw new TypeError(
+						`updateIf: delta for "${field}" must be exactly one of { inc: number } or { dec: number }.`,
+					);
+				}
+				const { inc, dec } = spec;
+				let signed: number;
+				if (typeof inc === "number" && typeof dec !== "number") {
+					signed = inc;
+				} else if (typeof dec === "number" && typeof inc !== "number") {
+					signed = -dec;
+				} else {
+					// Both present or neither present/numeric → ambiguous or invalid.
+					throw new TypeError(
+						`updateIf: delta for "${field}" must be exactly one of { inc: number } or { dec: number }.`,
+					);
+				}
+				if (!Number.isInteger(signed)) {
+					throw new TypeError(
+						`updateIf: delta for "${field}" must be an integer (got ${String(inc ?? dec)}).`,
+					);
+				}
+				deltaEntries.push([field, signed]);
+			}
+		}
+
+		// Defensive empty-`in` guard: an empty `in: []` matches nothing. The shared
+		// where-translation would emit invalid `IN ()`; short-circuit to a no-op
+		// (matches nothing → applied:false) BEFORE building any SQL.
+		for (const value of Object.values(where)) {
+			if (isInFilter(value) && value.in.length === 0) {
+				return { applied: false };
+			}
+		}
+
+		const now = new Date().toISOString();
+		const dataExpr = pluginDataWriteExpr(this.db, setEntries, deltaEntries);
+
+		let query = this.db
+			.updateTable("_plugin_storage")
+			.set({ data: dataExpr, updated_at: now })
+			.where("plugin_id", "=", this.pluginId)
+			.where("collection", "=", this.collection)
+			.where("id", "=", id);
+
+		const whereResult = buildWhereClause(this.db, where);
+		if (whereResult.sql) {
+			query = query.where(buildRawWhereExpression(whereResult));
+		}
+
+		const row = await query.returning("data").executeTakeFirst();
+		if (!row) return { applied: false };
+		// JSON.parse returns any; it flows into the T-typed `data` field directly.
+		const data: T = JSON.parse(row.data);
+		return { applied: true, data };
+	}
+
+	/**
+	 * Best-effort recovery of the single field behind a unique-index violation.
+	 * Prefers the `_plugin_indexes` tracking row (authoritative field list);
+	 * falls back to parsing the `generateIndexName` format. Composite indexes
+	 * yield `undefined`.
+	 */
+	private async recoverConflictField(indexName?: string): Promise<string | undefined> {
+		if (!indexName) return undefined;
+
+		const row = await this.db
+			.selectFrom("_plugin_indexes")
+			.select("fields")
+			.where("plugin_id", "=", this.pluginId)
+			.where("collection", "=", this.collection)
+			.where("index_name", "=", indexName)
+			.executeTakeFirst();
+
+		if (row) {
+			try {
+				const parsed: unknown = JSON.parse(row.fields);
+				if (Array.isArray(parsed) && parsed.length === 1 && typeof parsed[0] === "string") {
+					return parsed[0];
+				}
+			} catch {
+				// fall through to name parsing
+			}
+			return undefined;
+		}
+
+		// Fallback: uidx_plugin_<pluginId>_<collection>_<field>
+		const prefix = `uidx_plugin_${this.pluginId}_${this.collection}_`;
+		if (indexName.startsWith(prefix)) {
+			const field = indexName.slice(prefix.length);
+			if (SAFE_FIELD_NAME_RE.test(field)) return field;
+		}
+		return undefined;
 	}
 }
 

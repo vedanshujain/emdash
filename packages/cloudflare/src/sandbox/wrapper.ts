@@ -82,7 +82,9 @@ function createContext(env) {
 			count: (where) => bridge.storageCount(collectionName, where),
 			getMany: (ids) => bridge.storageGetMany(collectionName, ids),
 			putMany: (items) => bridge.storagePutMany(collectionName, items),
-			deleteMany: (ids) => bridge.storageDeleteMany(collectionName, ids)
+			deleteMany: (ids) => bridge.storageDeleteMany(collectionName, ids),
+			insert: (id, data) => bridge.storageInsert(collectionName, id, data),
+			updateIf: (id, args) => bridge.storageUpdateIf(collectionName, id, args)
 		};
 	}
 	
