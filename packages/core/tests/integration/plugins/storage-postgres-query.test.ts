@@ -72,10 +72,26 @@ describeEachDialect("Plugin storage query correctness", (dialect) => {
 
 	it("numeric RangeFilter compares numerically across the lexical boundary", async () => {
 		// '9' >= '10' is TRUE lexically but false numerically. A correct
-		// implementation returns exactly {10, 100}, never 9.
+		// implementation returns exactly {10, 100}, never 9 — and, ordered
+		// numerically, in the exact sequence [10, 100] (not lexical [10, 100]
+		// happens to coincide here, so assert the returned order directly, no
+		// .toSorted() masking).
 		const repo = await seedProducts();
 		const result = await repo.query({ where: { stock: { gte: 10 } }, orderBy: { stock: "asc" } });
-		expect(result.items.map((i) => i.id).toSorted()).toEqual(["p10", "p100"]);
+		expect(result.items.map((i) => i.id)).toEqual(["p10", "p100"]);
+		expect(result.items.map((i) => i.data.stock)).toEqual([10, 100]);
+	});
+
+	it("orderBy on a numeric field sorts numerically, not lexically", async () => {
+		// Lexically the ids/values sort as [10, 100, 9]; numerically [9, 10, 100].
+		// This is the orderBy-specific defect: text extraction sorts wrong on PG.
+		const repo = await seedProducts();
+		const asc = await repo.query({ orderBy: { stock: "asc" } });
+		expect(asc.items.map((i) => i.data.stock)).toEqual([9, 10, 100]);
+		expect(asc.items.map((i) => i.id)).toEqual(["p9", "p10", "p100"]);
+
+		const desc = await repo.query({ orderBy: { stock: "desc" } });
+		expect(desc.items.map((i) => i.data.stock)).toEqual([100, 10, 9]);
 	});
 
 	it("numeric RangeFilter with an upper bound stays numeric", async () => {
@@ -150,5 +166,79 @@ describeEachDialect("Plugin storage query correctness", (dialect) => {
 			.executeTakeFirstOrThrow();
 		expect(typeof row.data).toBe("string");
 		expect(JSON.parse(row.data)).toMatchObject({ stock: 9 });
+	});
+
+	it("numeric guard excludes non-number stored values without throwing", async () => {
+		// A schemaless store can hold a string where a numeric guard is applied.
+		// A bare ::numeric cast throws on Postgres; the type-guarded expression
+		// must return the same result on both dialects: only the numeric row.
+		const repo = productsRepo();
+		await repo.putMany([
+			{ id: "num", data: { sku: "N", stock: 5, tier: 1, name: "Numeric" } },
+			// stock is a string here — must be excluded, not error.
+			{ id: "str", data: { sku: "S", stock: "abc" as unknown as number, tier: 1, name: "Str" } },
+		]);
+
+		const rows = await repo.query({ where: { stock: { gte: 1 } } });
+		expect(rows.items.map((i) => i.id)).toEqual(["num"]);
+		expect(await repo.count({ stock: { gte: 1 } })).toBe(1);
+	});
+
+	it("boolean equality matches stored JSON booleans", async () => {
+		// On Postgres the extract is text ('true'/'false'); the bound JS boolean
+		// must still match. better-sqlite3 rejects boolean bind params entirely
+		// (a pre-existing limitation of the boolean path, unrelated to this fix),
+		// so this is only exercisable on Postgres.
+		if (dialect !== "postgres") return;
+
+		const repo = new PluginStorageRepository<{ active: boolean; name: string }>(
+			db,
+			"shop",
+			"flags",
+			["active"],
+		);
+		await repo.putMany([
+			{ id: "on", data: { active: true, name: "On" } },
+			{ id: "off", data: { active: false, name: "Off" } },
+		]);
+
+		expect((await repo.query({ where: { active: true } })).items.map((i) => i.id)).toEqual(["on"]);
+		expect((await repo.query({ where: { active: false } })).items.map((i) => i.id)).toEqual([
+			"off",
+		]);
+	});
+
+	it("numeric guards handle negative, zero, and float values numerically", async () => {
+		const repo = productsRepo();
+		await repo.putMany([
+			{ id: "neg", data: { sku: "NEG", stock: -5, tier: 1, name: "Neg" } },
+			{ id: "zero", data: { sku: "ZERO", stock: 0, tier: 1, name: "Zero" } },
+			{ id: "frac", data: { sku: "FRAC", stock: 3.5, tier: 1, name: "Frac" } },
+			{ id: "ten", data: { sku: "TEN", stock: 10, tier: 1, name: "Ten" } },
+		]);
+
+		const nonNegative = await repo.query({
+			where: { stock: { gte: 0 } },
+			orderBy: { stock: "asc" },
+		});
+		expect(nonNegative.items.map((i) => i.data.stock)).toEqual([0, 3.5, 10]);
+
+		expect((await repo.query({ where: { stock: { lt: 0 } } })).items.map((i) => i.id)).toEqual([
+			"neg",
+		]);
+
+		const fractional = await repo.query({ where: { stock: { gt: 3, lt: 4 } } });
+		expect(fractional.items.map((i) => i.id)).toEqual(["frac"]);
+	});
+
+	it("null field filter matches rows whose stored value is JSON null", async () => {
+		const repo = productsRepo();
+		await repo.putMany([
+			{ id: "hasNull", data: { sku: "X", stock: null as unknown as number, tier: 1, name: "N" } },
+			{ id: "hasValue", data: { sku: "Y", stock: 5, tier: 1, name: "V" } },
+		]);
+
+		const result = await repo.query({ where: { stock: null } });
+		expect(result.items.map((i) => i.id)).toEqual(["hasNull"]);
 	});
 });

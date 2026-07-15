@@ -58,6 +58,15 @@ export function generateCreateIndexSql(
 
 	// Build the indexed expressions
 	// Fields are validated above, safe to interpolate into json path
+	//
+	// The index expression is TEXT (`->>`), matching equality/startsWith/text
+	// predicates. Field TYPES are not known at index-creation time — the plugin
+	// manifest declares field names, not types — so we cannot build a numeric
+	// index speculatively. Consequence on Postgres: a numeric predicate compiles
+	// to a type-guarded `::numeric` expression (see pluginDataExtractExpr) that a
+	// text btree can't satisfy, so numeric range/equality guards fall back to a
+	// sequential scan. Acceptable for the small per-plugin/collection document
+	// sets this store targets; revisit with a typed-field manifest if needed.
 	const expressions = fields
 		.map((field) => {
 			// Index the extracted value as text (no numeric cast): uniqueness is

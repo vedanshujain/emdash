@@ -8,7 +8,7 @@
 
 import type { Kysely } from "kysely";
 
-import { pluginDataExtractExpr } from "../database/dialect-helpers.js";
+import { pluginDataExtractExpr, pluginDataOrderExpr } from "../database/dialect-helpers.js";
 import type { WhereClause, WhereValue, RangeFilter, InFilter, StartsWithFilter } from "./types.js";
 
 /**
@@ -134,6 +134,18 @@ export function jsonExtract(
 }
 
 /**
+ * SQL expression for ordering by a `_plugin_storage.data` field.
+ *
+ * Delegates to `pluginDataOrderExpr`, which orders over the jsonb-native value
+ * on Postgres so numeric fields sort numerically (not lexically) while staying
+ * total across heterogeneous data. SQLite keeps `json_extract` (already numeric).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- accepts any Kysely instance
+export function jsonOrderExtract(db: Kysely<any>, field: string): string {
+	return pluginDataOrderExpr(db, field);
+}
+
+/**
  * Build a WHERE clause condition for a single field
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- accepts any Kysely instance
@@ -250,7 +262,7 @@ export function buildOrderByClause(
 	const clauses: string[] = [];
 
 	for (const [field, direction] of Object.entries(orderBy)) {
-		clauses.push(`${jsonExtract(db, field)} ${direction.toUpperCase()}`);
+		clauses.push(`${jsonOrderExtract(db, field)} ${direction.toUpperCase()}`);
 	}
 
 	if (clauses.length === 0) {
