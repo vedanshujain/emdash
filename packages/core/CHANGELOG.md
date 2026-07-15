@@ -1,5 +1,30 @@
 # emdash
 
+## 0.30.0
+
+### Minor Changes
+
+- [#1890](https://github.com/emdash-cms/emdash/pull/1890) [`82827d3`](https://github.com/emdash-cms/emdash/commit/82827d3f8ffdaa4fae688b89cdcc139aa6c25810) Thanks [@swissky](https://github.com/swissky)! - Adds a Backups page to admin settings: download a complete content backup (all content including drafts and trash, schema, taxonomies, menus, widgets, media metadata, and site settings — never user accounts or secrets) with one click, and optionally enable daily automatic backups to the site's storage bucket with configurable retention. A new `backups:manage` permission gates the feature to admins.
+
+- [#2007](https://github.com/emdash-cms/emdash/pull/2007) [`6fb52b0`](https://github.com/emdash-cms/emdash/commit/6fb52b08139dead03f61324abe1ed10a9e5552e0) Thanks [@khoinguyenpham04](https://github.com/khoinguyenpham04)! - Adds `emdash media repair-usage` and the `media_usage_repair` MCP tool for repairing content media usage indexes by collection or across all collections; automation should inspect the structured repair status because non-complete results can still be successful invocations.
+
+- [#1868](https://github.com/emdash-cms/emdash/pull/1868) [`4c57ee2`](https://github.com/emdash-cms/emdash/commit/4c57ee216f242ef163ae269ec6ff6abfba716e6f) Thanks [@afonsojramos](https://github.com/afonsojramos)! - Invited users can now accept their invite by signing in with Google or GitHub, instead of only creating a passkey.
+
+### Patch Changes
+
+- [#1505](https://github.com/emdash-cms/emdash/pull/1505) [`fbb04ab`](https://github.com/emdash-cms/emdash/commit/fbb04abcff5b909e28541d3b3e5fca3089870b83) Thanks [@swissky](https://github.com/swissky)! - The admin shell now falls back to the Site Icon configured in Settings → General for its favicon, so the EmDash backend is branded like the public site. An explicit build-time `admin.favicon` still takes precedence, and the default EmDash mark is used when neither is set.
+
+- [#1945](https://github.com/emdash-cms/emdash/pull/1945) [`6c96ac8`](https://github.com/emdash-cms/emdash/commit/6c96ac8b68d6ba514aba51d5a5282c499afc22d6) Thanks [@swissky](https://github.com/swissky)! - Fixes unsaved inline (visual) editor changes being silently lost when navigating away, e.g. via the browser back button. Edits are now flushed with a keepalive request when the page unloads.
+
+- [#1980](https://github.com/emdash-cms/emdash/pull/1980) [`32f8261`](https://github.com/emdash-cms/emdash/commit/32f8261fc028dc6941a14d891a83722c8c830209) Thanks [@swissky](https://github.com/swissky)! - Fixes plugin storage `startsWith` queries treating `%`, `_`, and `\` in the prefix as LIKE wildcards instead of literal characters.
+
+- [#1962](https://github.com/emdash-cms/emdash/pull/1962) [`c24b7d3`](https://github.com/emdash-cms/emdash/commit/c24b7d3be5efa95e7874e48360e31fdc8b27a06d) Thanks [@MA2153](https://github.com/MA2153)! - Fixes taxonomy-filtered collection listings reading the entire collection on SQLite/D1 when the term is selective. Such listings now seek the matching entries directly, cutting D1 rows-read from tens of thousands to the page size.
+
+- Updated dependencies [[`82827d3`](https://github.com/emdash-cms/emdash/commit/82827d3f8ffdaa4fae688b89cdcc139aa6c25810), [`44e2685`](https://github.com/emdash-cms/emdash/commit/44e268560d145f2367093f9b4028e9b7f312c7a9), [`1c15097`](https://github.com/emdash-cms/emdash/commit/1c150977628d729c7b501f24c60a9f65fbb02123), [`4c57ee2`](https://github.com/emdash-cms/emdash/commit/4c57ee216f242ef163ae269ec6ff6abfba716e6f)]:
+  - @emdash-cms/admin@0.30.0
+  - @emdash-cms/auth@0.30.0
+  - @emdash-cms/gutenberg-to-portable-text@0.30.0
+
 ## 0.29.0
 
 ### Minor Changes
