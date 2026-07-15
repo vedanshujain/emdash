@@ -229,3 +229,40 @@ export function jsonExtractExpr(db: Kysely<any>, column: string, path: string): 
 	}
 	return `json_extract(${column}, '$.${path}')`;
 }
+
+/**
+ * SQL expression for extracting a field from the plugin-storage `data` column.
+ *
+ * Unlike `jsonExtractExpr` (for real `json`/`jsonb` content columns),
+ * `_plugin_storage.data` is a plain `text` column. On Postgres the JSON
+ * operator `->>` has no overload for `text` — `text ->> 'x'` raises
+ * `operator does not exist: text ->> unknown` — so the column must be cast to
+ * `jsonb` first. The extracted value is still `text`, so a numeric comparison
+ * (`stock >= 10`) would compare lexically (`'9' >= '10'` is TRUE) and silently
+ * over-count / oversell; pass `{ numeric: true }` to cast the extracted value
+ * to `numeric` so the comparison is numeric.
+ *
+ * SQLite's `json_extract` already returns a typed value (numeric for JSON
+ * numbers), so no cast is needed and `numeric` is a no-op there.
+ *
+ * The field name is validated (`/^[a-zA-Z][a-zA-Z0-9_]*$/`) before
+ * interpolation, so the `::jsonb`/`::numeric` casts wrap only a safe
+ * identifier and add no injection surface.
+ *
+ * sqlite:   json_extract(data, '$.field')
+ * postgres: (data::jsonb)->>'field'            (text)
+ * postgres: ((data::jsonb)->>'field')::numeric (numeric)
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- accepts any Kysely instance
+export function pluginDataExtractExpr(
+	db: Kysely<any>,
+	field: string,
+	options?: { numeric?: boolean },
+): string {
+	validateJsonFieldName(field, "plugin storage field name");
+	if (isPostgres(db)) {
+		const text = `(data::jsonb)->>'${field}'`;
+		return options?.numeric ? `(${text})::numeric` : text;
+	}
+	return `json_extract(data, '$.${field}')`;
+}

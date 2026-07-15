@@ -7,7 +7,7 @@
  * @see PLUGIN-SYSTEM.md § Plugin Storage > Full API Reference
  */
 
-import type { Kysely } from "kysely";
+import type { Kysely, RawBuilder, SqlBool } from "kysely";
 import { sql } from "kysely";
 
 import {
@@ -26,6 +26,37 @@ import type {
 import { withTransaction } from "../transaction.js";
 import type { Database } from "../types.js";
 import { encodeCursor, decodeCursor } from "./types.js";
+
+/**
+ * Turn a `buildWhereClause` result (`?`-placeholder SQL + ordered params) into a
+ * single boolean expression suitable for Kysely's `.where()`.
+ *
+ * The `?` placeholders are spliced back into value fragments (`sql`${param}``,
+ * which parameterizes safely) interleaved with the raw SQL between them. The
+ * whole condition is returned as a boolean expression and passed directly to
+ * `.where()` — it must NOT be wrapped in an `= 1` comparison. Postgres parses
+ * `<cond> = 1` as a chained comparison (`a >= $1 = 1`), a syntax error, and even
+ * parenthesized `(a >= $1) = 1` is `boolean = integer`, which Postgres rejects.
+ * A bare boolean expression is valid on both SQLite and Postgres.
+ */
+function buildRawWhereExpression(whereResult: {
+	sql: string;
+	params: unknown[];
+}): RawBuilder<SqlBool> {
+	const parts: RawBuilder<unknown>[] = [];
+	let paramIndex = 0;
+	const sqlParts = whereResult.sql.split("?");
+	for (let i = 0; i < sqlParts.length; i++) {
+		if (i > 0) {
+			parts.push(sql`${whereResult.params[paramIndex++]}`);
+		}
+		const chunk = sqlParts[i];
+		if (chunk) {
+			parts.push(sql.raw(chunk));
+		}
+	}
+	return sql<SqlBool>`${sql.join(parts, sql.raw(""))}`;
+}
 
 /**
  * Plugin Storage Repository
@@ -211,19 +242,7 @@ export class PluginStorageRepository<T = unknown> implements StorageCollection<T
 		// Add JSON extraction WHERE conditions
 		const whereResult = buildWhereClause(this.db, where);
 		if (whereResult.sql) {
-			// Use sql template to add the raw WHERE conditions with params
-			const whereSqlParts: ReturnType<typeof sql>[] = [];
-			let paramIndex = 0;
-			const sqlParts = whereResult.sql.split("?");
-			for (let i = 0; i < sqlParts.length; i++) {
-				if (i > 0) {
-					whereSqlParts.push(sql`${whereResult.params[paramIndex++]}`);
-				}
-				if (sqlParts[i]) {
-					whereSqlParts.push(sql.raw(sqlParts[i]));
-				}
-			}
-			query = query.where(({ eb }) => eb(sql.join(whereSqlParts, sql.raw("")), "=", sql.raw("1")));
+			query = query.where(buildRawWhereExpression(whereResult));
 		}
 
 		// Handle cursor-based pagination — throws on invalid cursor.
@@ -289,26 +308,14 @@ export class PluginStorageRepository<T = unknown> implements StorageCollection<T
 		if (where && Object.keys(where).length > 0) {
 			const whereResult = buildWhereClause(this.db, where);
 			if (whereResult.sql) {
-				// Use sql template to add the raw WHERE conditions with params
-				const whereSqlParts: ReturnType<typeof sql>[] = [];
-				let paramIndex = 0;
-				const sqlParts = whereResult.sql.split("?");
-				for (let i = 0; i < sqlParts.length; i++) {
-					if (i > 0) {
-						whereSqlParts.push(sql`${whereResult.params[paramIndex++]}`);
-					}
-					if (sqlParts[i]) {
-						whereSqlParts.push(sql.raw(sqlParts[i]));
-					}
-				}
-				query = query.where(({ eb }) =>
-					eb(sql.join(whereSqlParts, sql.raw("")), "=", sql.raw("1")),
-				);
+				query = query.where(buildRawWhereExpression(whereResult));
 			}
 		}
 
 		const result = await query.executeTakeFirst();
-		return result?.count ?? 0;
+		// Postgres returns COUNT(*) (bigint) as a string via node-postgres; coerce
+		// so this always satisfies its Promise<number> contract on both dialects.
+		return Number(result?.count ?? 0);
 	}
 }
 

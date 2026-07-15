@@ -9,7 +9,7 @@
 import type { Kysely, RawBuilder } from "kysely";
 import { sql } from "kysely";
 
-import { jsonExtractExpr, isPostgres } from "../database/dialect-helpers.js";
+import { pluginDataExtractExpr, isPostgres } from "../database/dialect-helpers.js";
 import type { Database } from "../database/types.js";
 import {
 	validateIdentifier,
@@ -60,11 +60,14 @@ export function generateCreateIndexSql(
 	// Fields are validated above, safe to interpolate into json path
 	const expressions = fields
 		.map((field) => {
+			// Index the extracted value as text (no numeric cast): uniqueness is
+			// defined on the textual JSON value, and on Postgres the `data` column
+			// is `text`, so pluginDataExtractExpr adds the required `::jsonb` cast.
 			if (isPostgres(db)) {
 				// Postgres expression indexes need parens around the expression
-				return `(${jsonExtractExpr(db, "data", field)})`;
+				return `(${pluginDataExtractExpr(db, field)})`;
 			}
-			return jsonExtractExpr(db, "data", field);
+			return pluginDataExtractExpr(db, field);
 		})
 		.join(", ");
 
