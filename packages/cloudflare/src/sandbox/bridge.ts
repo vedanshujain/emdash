@@ -9,8 +9,8 @@
 
 import type { D1Database } from "@cloudflare/workers-types";
 import { WorkerEntrypoint } from "cloudflare:workers";
-import type { SandboxEmailSendCallback } from "emdash";
-import { ulid, PluginStorageRepository } from "emdash";
+import type { SandboxEmailSendCallback, BatchOp } from "emdash";
+import { ulid, PluginStorageRepository, applyPluginStorageBatchD1 } from "emdash";
 import { Kysely } from "kysely";
 import { D1Dialect } from "kysely-d1";
 
@@ -485,6 +485,49 @@ export class PluginBridge extends WorkerEntrypoint<PluginBridgeEnv, PluginBridge
 			set: args.set,
 			delta: args.delta,
 		});
+	}
+
+	/**
+	 * Atomic multi-document batch. This is the ONE place that uses the raw
+	 * `env.DB.batch()` mechanism (D1 has no interactive transactions):
+	 * `applyPluginStorageBatchD1` compiles each op via a SQLite-dialect Kysely and
+	 * interleaves zero-rows assertions so a failed guard rolls back the WHOLE
+	 * batch. Validates every op's declared collection (anti-smuggling) and per-op
+	 * where/set/delta shapes up front — symmetric with `storageUpdateIf` — so the
+	 * `BatchResult` shape and error messages match the workerd bridge exactly.
+	 */
+	async storageBatch(ops: unknown): Promise<unknown> {
+		const { pluginId, storageCollections } = this.ctx.props;
+		if (!Array.isArray(ops)) {
+			throw new Error("storage/batch requires an array of ops");
+		}
+		for (const op of ops) {
+			if (!isJsonObject(op)) throw new Error("batch op must be an object");
+			if (op.op !== "insert" && op.op !== "updateIf") {
+				throw new Error(`batch op has unknown op: ${String(op.op)}`);
+			}
+			if (typeof op.collection !== "string") {
+				throw new Error("batch op requires a string collection");
+			}
+			if (typeof op.id !== "string") throw new Error("batch op requires a string id");
+			if (!storageCollections.includes(op.collection)) {
+				throw new Error(`Storage collection not declared: ${op.collection}`);
+			}
+			if (op.op === "updateIf") {
+				if (!isJsonObject(op.where)) {
+					throw new Error("storage/updateIf requires an object `where`");
+				}
+				if (op.set !== undefined && !isJsonObject(op.set)) {
+					throw new Error("storage/updateIf `set` must be an object when provided");
+				}
+				if (op.delta !== undefined && !isJsonObject(op.delta)) {
+					throw new Error("storage/updateIf `delta` must be an object when provided");
+				}
+			}
+		}
+		// env.DB (D1Database) is structurally a D1BatchBinding (prepare/bind/first/batch).
+		// eslint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- each op validated above; applyPluginStorageBatchD1 re-validates set/delta and reports guard outcomes.
+		return applyPluginStorageBatchD1(this.env.DB, pluginId, ops as BatchOp[]);
 	}
 
 	// =========================================================================

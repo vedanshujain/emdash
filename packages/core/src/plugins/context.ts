@@ -11,7 +11,10 @@ import { ulid } from "ulidx";
 import { ContentRepository } from "../database/repositories/content.js";
 import { MediaRepository } from "../database/repositories/media.js";
 import { OptionsRepository } from "../database/repositories/options.js";
-import { PluginStorageRepository } from "../database/repositories/plugin-storage.js";
+import {
+	PluginStorageRepository,
+	applyPluginStorageBatch,
+} from "../database/repositories/plugin-storage.js";
 import { SeoRepository } from "../database/repositories/seo.js";
 import { TaxonomyRepository, type Taxonomy } from "../database/repositories/taxonomy.js";
 import { UserRepository } from "../database/repositories/user.js";
@@ -33,6 +36,8 @@ import type {
 	PluginContext,
 	PluginStorageConfig,
 	StorageCollection,
+	StorageAccess,
+	BatchOp,
 	KVAccess,
 	CronAccess,
 	EmailAccess,
@@ -151,7 +156,7 @@ export function createStorageAccess<T extends PluginStorageConfig>(
 	db: Kysely<Database>,
 	pluginId: string,
 	storageConfig: T,
-): Record<string, StorageCollection> {
+): StorageAccess {
 	const storage: Record<string, StorageCollection> = {};
 
 	for (const [collectionName, config] of Object.entries(storageConfig)) {
@@ -159,7 +164,12 @@ export function createStorageAccess<T extends PluginStorageConfig>(
 		storage[collectionName] = createStorageCollection(db, pluginId, collectionName, allIndexes);
 	}
 
-	return storage;
+	// Attach the cross-collection atomic batch primitive alongside the
+	// per-collection accessors. `Object.assign` yields exactly
+	// `Record<string, StorageCollection> & { batch }` = StorageAccess.
+	return Object.assign(storage, {
+		batch: (ops: BatchOp[]) => applyPluginStorageBatch(db, pluginId, ops),
+	});
 }
 
 // =============================================================================

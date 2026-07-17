@@ -13,5 +13,6 @@
 		"noImplicitOverride": true,
 		"types": ["@cloudflare/workers-types", "astro/client"]
 	},
-	"include": ["src/**/*.ts", "tests/**/*.ts"]
+	"include": ["src/**/*.ts", "tests/**/*.ts"],
+	"exclude": ["tests/d1/**"]
 }

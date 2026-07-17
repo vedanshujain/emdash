@@ -1,0 +1,14 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "d1-plugin-storage-batch",
+	"main": "./worker.ts",
+	"compatibility_date": "2026-02-24",
+	"compatibility_flags": ["nodejs_compat"],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "plugin-storage-batch",
+			"migrations_dir": "./migrations",
+		},
+	],
+}

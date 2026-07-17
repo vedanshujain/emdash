@@ -18,6 +18,29 @@ import {
 } from "../database/validate.js";
 
 /**
+ * Collection names that collide with a method on the `ctx.storage` access
+ * object (the {@link StorageAccess} intersection type). `"batch"` matches the
+ * collection-name regex `/^[a-z][a-z0-9_]*$/`, so a plugin declaring a
+ * collection named `batch` would be silently SHADOWED by `ctx.storage.batch()`.
+ * Reject such names at declaration time.
+ */
+const RESERVED_COLLECTION_NAMES = new Set<string>(["batch"]);
+
+/**
+ * Validate a plugin storage collection name: a safe identifier AND not a
+ * reserved access-object method name. Throws with a clear message otherwise.
+ */
+export function assertCollectionNameAllowed(collection: string): void {
+	validateIdentifier(collection, "collection name");
+	if (RESERVED_COLLECTION_NAMES.has(collection)) {
+		throw new Error(
+			`Storage collection name "${collection}" is reserved — it collides with the ` +
+				`ctx.storage.${collection}() method. Rename the collection.`,
+		);
+	}
+}
+
+/**
  * Generate a deterministic index name.
  * Unique indexes use a `uidx_` prefix to avoid collisions with regular indexes on the same fields.
  */
@@ -120,6 +143,9 @@ export async function createStorageIndexes(
 	created: string[];
 	errors: Array<{ index: string; error: string }>;
 }> {
+	// Reject reserved / malformed collection names at declaration (install) time.
+	assertCollectionNameAllowed(collection);
+
 	const normalized = normalizeIndexes(indexes);
 	const uniqueNormalized = options?.uniqueIndexes ? normalizeIndexes(options.uniqueIndexes) : [];
 	const uniqueSet = new Set(uniqueNormalized.map((f) => f.join(",")));

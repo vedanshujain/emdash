@@ -115,12 +115,14 @@
   "devDependencies": {
     "@arethetypeswrong/cli": "catalog:",
     "@astrojs/cloudflare": "catalog:",
+    "@cloudflare/vitest-pool-workers": "catalog:",
     "@cloudflare/workers-types": "catalog:",
     "@types/pg": "^8.16.0",
     "publint": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "wrangler": "catalog:"
   },
   "repository": {
     "type": "git",
