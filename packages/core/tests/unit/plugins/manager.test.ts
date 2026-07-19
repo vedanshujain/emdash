@@ -13,6 +13,7 @@ import { Kysely, SqliteDialect } from "kysely";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import { runMigrations } from "../../../src/database/migrations/runner.js";
+import { PluginStorageRepository } from "../../../src/database/repositories/plugin-storage.js";
 import type { Database as DbSchema } from "../../../src/database/types.js";
 import { PluginManager, createPluginManager } from "../../../src/plugins/manager.js";
 import type { PluginDefinition } from "../../../src/plugins/types.js";
@@ -170,6 +171,105 @@ describe("PluginManager", () => {
 			// Hook should be registered but not called without context factory
 			// In real usage, the hook would be called
 			expect(manager.getPluginState("my-plugin")).toBe("installed");
+		});
+	});
+
+	describe("storage index wiring", () => {
+		function shopDefinition(): PluginDefinition {
+			return createTestDefinition({
+				id: "shop",
+				storage: { products: { indexes: ["stock"], uniqueIndexes: ["sku"] } },
+			});
+		}
+
+		it("install() creates declared storage indexes (regular + unique) per collection", async () => {
+			manager.register(shopDefinition());
+			await manager.install("shop");
+
+			const rows = await db
+				.selectFrom("_plugin_indexes")
+				.select("index_name")
+				.where("plugin_id", "=", "shop")
+				.execute();
+			const names = rows.map((r) => r.index_name);
+			expect(names).toContain("uidx_plugin_shop_products_sku");
+			expect(names).toContain("idx_plugin_shop_products_stock");
+		});
+
+		it("install() actually enforces the declared unique index", async () => {
+			manager.register(shopDefinition());
+			await manager.install("shop");
+
+			const repo = new PluginStorageRepository<{ sku: string; stock: number }>(
+				db,
+				"shop",
+				"products",
+				["sku", "stock"],
+			);
+			expect(await repo.insert("p1", { sku: "DUP", stock: 1 })).toEqual({ inserted: true });
+			expect(await repo.insert("p2", { sku: "DUP", stock: 2 })).toEqual({
+				inserted: false,
+				reason: "unique_violation",
+				conflictField: "sku",
+			});
+		});
+
+		it("install() fails loudly when a unique index cannot be created", async () => {
+			// Pre-seed duplicate `sku` values so CREATE UNIQUE INDEX must fail —
+			// a silently-missing unique index is exactly the oversell/dup this
+			// feature prevents, so the install must throw.
+			const now = new Date().toISOString();
+			await db
+				.insertInto("_plugin_storage")
+				.values([
+					{
+						plugin_id: "shop",
+						collection: "products",
+						id: "a",
+						data: JSON.stringify({ sku: "DUP" }),
+						created_at: now,
+						updated_at: now,
+					},
+					{
+						plugin_id: "shop",
+						collection: "products",
+						id: "b",
+						data: JSON.stringify({ sku: "DUP" }),
+						created_at: now,
+						updated_at: now,
+					},
+				])
+				.execute();
+
+			manager.register(
+				createTestDefinition({
+					id: "shop",
+					storage: { products: { indexes: [], uniqueIndexes: ["sku"] } },
+				}),
+			);
+			await expect(manager.install("shop")).rejects.toThrow(/storage indexes/i);
+		});
+
+		it("uninstall() drops the plugin's storage indexes and clears tracking rows", async () => {
+			manager.register(shopDefinition());
+			await manager.install("shop");
+			expect(
+				await db
+					.selectFrom("_plugin_indexes")
+					.selectAll()
+					.where("plugin_id", "=", "shop")
+					.execute(),
+			).not.toHaveLength(0);
+
+			await manager.uninstall("shop");
+
+			expect(
+				await db
+					.selectFrom("_plugin_indexes")
+					.selectAll()
+					.where("plugin_id", "=", "shop")
+					.execute(),
+			).toHaveLength(0);
 		});
 	});
 

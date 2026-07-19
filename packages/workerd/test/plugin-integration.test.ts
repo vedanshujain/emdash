@@ -188,6 +188,55 @@ describe("Plugin integration: sandboxed-test plugin operations", () => {
 		expect(countResult.result).toBe(1);
 	});
 
+	// ── Conditional writes over the full sandbox bridge path ─────────────
+	//
+	// This exercises insert/updateIf through createBridgeHandler over
+	// better-sqlite3, which is the SAME SQL dialect D1 uses (SQLite). D1 — like
+	// better-sqlite3 here — serializes writes (single writer), so a concurrent
+	// burst of guarded decrements can never oversell: this proves the D1-dialect
+	// SQL and the single-statement-guard semantics. The genuine CONCURRENT-race
+	// assertion (overlapping connections) is the Postgres suite in
+	// packages/core (storage-no-oversell.test.ts [postgres]).
+
+	it("no oversell over the sandbox bridge (SQLite = D1 dialect; serialized writes prove SQL + guard, not the race)", async () => {
+		const handler = createBridgeHandler({
+			pluginId: "shop",
+			version: "1.0.0",
+			capabilities: [],
+			allowedHosts: [],
+			storageCollections: ["inventory"],
+			db,
+			emailSend: () => null,
+		});
+
+		const M = 3;
+		const N = 12;
+		await call(handler, "storage/insert", {
+			collection: "inventory",
+			id: "widget",
+			data: { stock: M },
+		});
+
+		const results = await Promise.all(
+			Array.from({ length: N }, () =>
+				call(handler, "storage/updateIf", {
+					collection: "inventory",
+					id: "widget",
+					where: { stock: { gte: 1 } },
+					delta: { stock: { dec: 1 } },
+				}),
+			),
+		);
+
+		const applied = results.filter(
+			(r) => (r.result as { applied?: boolean } | undefined)?.applied === true,
+		).length;
+		expect(applied).toBe(M);
+
+		const got = await call(handler, "storage/get", { collection: "inventory", id: "widget" });
+		expect(got.result).toEqual({ stock: 0 });
+	});
+
 	// ── Mirrors sandboxed-test plugin's content/list route ───────────────
 
 	it("Content list with read:content capability", async () => {

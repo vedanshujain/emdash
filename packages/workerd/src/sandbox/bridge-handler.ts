@@ -309,6 +309,21 @@ async function dispatch(
 				requireString(body, "collection"),
 				requireStringArray(body, "ids"),
 			);
+		case "storage/insert":
+			validateStorageCollection(opts, requireString(body, "collection"));
+			return storageInsert(
+				opts,
+				requireString(body, "collection"),
+				requireString(body, "id"),
+				body.data,
+			);
+		case "storage/updateIf":
+			validateStorageCollection(opts, requireString(body, "collection"));
+			return storageUpdateIf(opts, requireString(body, "collection"), requireString(body, "id"), {
+				where: requireRecord(body, "where"),
+				set: optionalRecord(body, "set"),
+				delta: optionalRecord(body, "delta"),
+			});
 
 		// ── Logging ─────────────────────────────────────────────────────
 		case "log": {
@@ -1617,4 +1632,31 @@ async function storageDeleteMany(
 ): Promise<number> {
 	if (!ids || ids.length === 0) return 0;
 	return getStorageRepo(opts, collection).deleteMany(ids);
+}
+
+async function storageInsert(
+	opts: BridgeHandlerOptions,
+	collection: string,
+	id: string,
+	data: unknown,
+): Promise<unknown> {
+	return getStorageRepo(opts, collection).insert(id, data);
+}
+
+async function storageUpdateIf(
+	opts: BridgeHandlerOptions,
+	collection: string,
+	id: string,
+	args: {
+		where: Record<string, unknown>;
+		set?: Record<string, unknown>;
+		delta?: Record<string, unknown>;
+	},
+): Promise<unknown> {
+	return getStorageRepo(opts, collection).updateIf(id, {
+		// eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- WhereClause is structurally Record<string, WhereValue>; the repo validates the guard.
+		where: args.where as never,
+		set: args.set,
+		delta: args.delta,
+	});
 }

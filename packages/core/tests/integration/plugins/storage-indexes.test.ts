@@ -11,7 +11,14 @@ import {
 	removeAllPluginIndexes,
 	getPluginIndexStatus,
 } from "../../../src/plugins/storage-indexes.js";
-import { setupTestDatabase, teardownTestDatabase } from "../../utils/test-db.js";
+import {
+	setupTestDatabase,
+	teardownTestDatabase,
+	describeEachDialect,
+	setupForDialect,
+	teardownForDialect,
+	type DialectTestContext,
+} from "../../utils/test-db.js";
 
 const UNIQUE_CONSTRAINT_PATTERN = /UNIQUE constraint failed/;
 
@@ -376,5 +383,58 @@ describe("Plugin Storage Indexes Integration", () => {
 			expect(result.items).toHaveLength(1);
 			expect(result.items[0].data.slug).toBe("contact");
 		});
+	});
+});
+
+// Cross-dialect coverage for the unique-index lifecycle wired into plugin
+// install/uninstall. On Postgres this also proves the UNIQUE expression index
+// builds against the `text` `data` column (needs the ::jsonb cast from PR A).
+describeEachDialect("Plugin unique-index lifecycle", (dialect) => {
+	let ctx: DialectTestContext;
+	let db: Kysely<Database>;
+
+	beforeEach(async () => {
+		ctx = await setupForDialect(dialect);
+		db = ctx.db;
+	});
+
+	afterEach(async () => {
+		await teardownForDialect(ctx);
+	});
+
+	it("creates a declared unique index and enforces it via insert()", async () => {
+		const result = await createStorageIndexes(db, "shop", "forms", [], {
+			uniqueIndexes: ["slug"],
+		});
+		expect(result.errors).toEqual([]);
+		expect(result.created).toContain("uidx_plugin_shop_forms_slug");
+
+		const repo = new PluginStorageRepository<{ slug: string }>(db, "shop", "forms", ["slug"]);
+		expect(await repo.insert("f1", { slug: "contact" })).toEqual({ inserted: true });
+		expect(await repo.insert("f2", { slug: "contact" })).toEqual({
+			inserted: false,
+			reason: "unique_violation",
+			conflictField: "slug",
+		});
+	});
+
+	it("removeAllPluginIndexes drops the unique index and clears tracking rows", async () => {
+		await createStorageIndexes(db, "shop", "forms", [], { uniqueIndexes: ["slug"] });
+
+		const removeResult = await removeAllPluginIndexes(db, "shop");
+		expect(removeResult.errors).toEqual([]);
+		expect(removeResult.removed).toContain("uidx_plugin_shop_forms_slug");
+
+		const remaining = await db
+			.selectFrom("_plugin_indexes")
+			.selectAll()
+			.where("plugin_id", "=", "shop")
+			.execute();
+		expect(remaining).toHaveLength(0);
+
+		// With the unique index gone, the previously-conflicting insert succeeds.
+		const repo = new PluginStorageRepository<{ slug: string }>(db, "shop", "forms", ["slug"]);
+		await repo.insert("f1", { slug: "contact" });
+		expect(await repo.insert("f2", { slug: "contact" })).toEqual({ inserted: true });
 	});
 });

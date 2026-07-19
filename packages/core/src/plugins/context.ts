@@ -123,6 +123,8 @@ function createStorageCollection<T>(
 		putMany: (items) => repo.putMany(items),
 		deleteMany: (ids) => repo.deleteMany(ids),
 		count: (where) => repo.count(where),
+		insert: (id, data) => repo.insert(id, data),
+		updateIf: (id, updateArgs) => repo.updateIf(id, updateArgs),
 
 		// Query returns PaginatedResult instead of the old format
 		async query(options?: QueryOptions): Promise<PaginatedResult<{ id: string; data: T }>> {

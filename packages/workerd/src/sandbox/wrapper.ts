@@ -102,6 +102,8 @@ function createContext() {
 			},
 			putMany: (items) => bridgeCall("storage/putMany", { collection: collectionName, items }),
 			deleteMany: (ids) => bridgeCall("storage/deleteMany", { collection: collectionName, ids }),
+			insert: (id, data) => bridgeCall("storage/insert", { collection: collectionName, id, data }),
+			updateIf: (id, args) => bridgeCall("storage/updateIf", { collection: collectionName, id, where: (args || {}).where, set: (args || {}).set, delta: (args || {}).delta }),
 		};
 	}
 

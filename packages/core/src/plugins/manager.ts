@@ -25,6 +25,7 @@ import {
 	resolveExclusiveHooks as resolveExclusiveHooksShared,
 } from "./hooks.js";
 import { PluginRouteRegistry, type RouteResult, type InvokeRouteOptions } from "./routes.js";
+import { createStorageIndexes, removeAllPluginIndexes } from "./storage-indexes.js";
 import type {
 	PluginDefinition,
 	ResolvedPlugin,
@@ -183,6 +184,29 @@ export class PluginManager {
 			throw new Error(`Plugin install failed: ${failed.error?.message ?? "Unknown error"}`);
 		}
 
+		// Materialize declared storage indexes (regular + unique) for each
+		// collection. A missing UNIQUE index is exactly the oversell/duplicate
+		// this feature prevents, so fail the install loudly rather than
+		// best-effort — a silently-missing constraint would be worse than a
+		// failed install.
+		for (const [collection, config] of Object.entries(entry.plugin.storage)) {
+			const res = await createStorageIndexes(
+				this.options.db,
+				pluginId,
+				collection,
+				config.indexes,
+				{
+					uniqueIndexes: config.uniqueIndexes,
+				},
+			);
+			if (res.errors.length > 0) {
+				const detail = res.errors.map((e) => `${e.index}: ${e.error}`).join("; ");
+				throw new Error(
+					`Plugin install failed: could not create storage indexes for "${pluginId}" collection "${collection}": ${detail}`,
+				);
+			}
+		}
+
 		entry.state = "installed";
 		return results;
 	}
@@ -283,6 +307,12 @@ export class PluginManager {
 
 		// Delete all cron tasks for the uninstalled plugin
 		await this.deleteCronTasks(pluginId);
+
+		// Drop the plugin's storage indexes and clear their tracking rows.
+		// Uninstall does not delete storage data today, but orphaned indexes
+		// serve nothing once the plugin is gone (and their partial-index WHERE is
+		// scoped to this plugin), so drop unconditionally regardless of deleteData.
+		await removeAllPluginIndexes(this.options.db, pluginId);
 
 		// Remove from manager
 		this.plugins.delete(pluginId);
