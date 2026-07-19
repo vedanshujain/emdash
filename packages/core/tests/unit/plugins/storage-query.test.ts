@@ -18,6 +18,12 @@ import { createTestDatabase } from "../../utils/test-db.js";
 
 describe("storage-query", () => {
 	const db = createTestDatabase();
+
+	// SQLite type-guarded numeric extraction. Numeric comparisons wrap the
+	// extract in a CASE so a non-number stored value yields NULL (no match)
+	// instead of coercing — keeping parity with the Postgres numeric guard.
+	const numExpr = (field: string): string =>
+		`CASE WHEN json_type(data, '$.${field}') IN ('integer', 'real') THEN json_extract(data, '$.${field}') END`;
 	describe("type guards", () => {
 		describe("isRangeFilter", () => {
 			it("should return true for range filters with gt", () => {
@@ -211,7 +217,7 @@ describe("storage-query", () => {
 
 		it("should handle number values", () => {
 			const result = buildCondition(db, "count", 42);
-			expect(result.sql).toBe("json_extract(data, '$.count') = ?");
+			expect(result.sql).toBe(`${numExpr("count")} = ?`);
 			expect(result.params).toEqual([42]);
 		});
 
@@ -225,6 +231,19 @@ describe("storage-query", () => {
 			const result = buildCondition(db, "status", { in: ["a", "b", "c"] });
 			expect(result.sql).toBe("json_extract(data, '$.status') IN (?, ?, ?)");
 			expect(result.params).toEqual(["a", "b", "c"]);
+		});
+
+		it("should compare numerically for all-number IN filters", () => {
+			const result = buildCondition(db, "count", { in: [1, 2, 3] });
+			expect(result.sql).toBe(`${numExpr("count")} IN (?, ?, ?)`);
+			expect(result.params).toEqual([1, 2, 3]);
+		});
+
+		it("should fall back to text comparison for mixed-type IN filters", () => {
+			// A single non-number element pins the whole list to text comparison.
+			const result = buildCondition(db, "tag", { in: [10, "x"] });
+			expect(result.sql).toBe("json_extract(data, '$.tag') IN (?, ?)");
+			expect(result.params).toEqual([10, "x"]);
 		});
 
 		it("should handle startsWith filters", () => {
@@ -241,34 +260,39 @@ describe("storage-query", () => {
 
 		it("should handle range filters with gt", () => {
 			const result = buildCondition(db, "age", { gt: 18 });
-			expect(result.sql).toBe("json_extract(data, '$.age') > ?");
+			expect(result.sql).toBe(`${numExpr("age")} > ?`);
 			expect(result.params).toEqual([18]);
 		});
 
 		it("should handle range filters with gte", () => {
 			const result = buildCondition(db, "age", { gte: 18 });
-			expect(result.sql).toBe("json_extract(data, '$.age') >= ?");
+			expect(result.sql).toBe(`${numExpr("age")} >= ?`);
 			expect(result.params).toEqual([18]);
 		});
 
 		it("should handle range filters with lt", () => {
 			const result = buildCondition(db, "age", { lt: 65 });
-			expect(result.sql).toBe("json_extract(data, '$.age') < ?");
+			expect(result.sql).toBe(`${numExpr("age")} < ?`);
 			expect(result.params).toEqual([65]);
 		});
 
 		it("should handle range filters with lte", () => {
 			const result = buildCondition(db, "age", { lte: 65 });
-			expect(result.sql).toBe("json_extract(data, '$.age') <= ?");
+			expect(result.sql).toBe(`${numExpr("age")} <= ?`);
 			expect(result.params).toEqual([65]);
 		});
 
 		it("should handle combined range filters", () => {
 			const result = buildCondition(db, "age", { gte: 18, lt: 65 });
-			expect(result.sql).toBe(
-				"json_extract(data, '$.age') >= ? AND json_extract(data, '$.age') < ?",
-			);
+			expect(result.sql).toBe(`${numExpr("age")} >= ? AND ${numExpr("age")} < ?`);
 			expect(result.params).toEqual([18, 65]);
+		});
+
+		it("should keep text comparison for string range bounds", () => {
+			// A string bound (e.g. ISO date) stays textual per side.
+			const result = buildCondition(db, "createdAt", { gte: "2024-01-01" });
+			expect(result.sql).toBe("json_extract(data, '$.createdAt') >= ?");
+			expect(result.params).toEqual(["2024-01-01"]);
 		});
 	});
 

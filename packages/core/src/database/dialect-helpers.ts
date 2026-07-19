@@ -229,3 +229,74 @@ export function jsonExtractExpr(db: Kysely<any>, column: string, path: string): 
 	}
 	return `json_extract(${column}, '$.${path}')`;
 }
+
+/**
+ * SQL expression for extracting a field from the plugin-storage `data` column.
+ *
+ * Unlike `jsonExtractExpr` (for real `json`/`jsonb` content columns),
+ * `_plugin_storage.data` is a plain `text` column. On Postgres the JSON
+ * operator `->>` has no overload for `text` — `text ->> 'x'` raises
+ * `operator does not exist: text ->> unknown` — so the column must be cast to
+ * `jsonb` first. The extracted value is still `text`, so a numeric comparison
+ * (`stock >= 10`) would compare lexically (`'9' >= '10'` is TRUE) and silently
+ * over-count / oversell; pass `{ numeric: true }` for a numeric comparison.
+ *
+ * The numeric form is a **type-guarded** cast, not a bare `::numeric`. A bare
+ * cast throws `invalid input syntax for type numeric` on Postgres the moment a
+ * single scanned row stores a non-number in that field (documents are
+ * schemaless), aborting the whole query — and it would diverge from SQLite,
+ * which silently coerces. Guarding with `jsonb_typeof`/`json_type` makes the
+ * comparison **total and parity-correct on both dialects**: a non-number
+ * stored value yields `NULL` (no match) instead of an error.
+ *
+ * The field name is validated (`/^[a-zA-Z][a-zA-Z0-9_]*$/`) before
+ * interpolation, so the casts wrap only a safe identifier and add no injection
+ * surface.
+ *
+ * sqlite text:      json_extract(data, '$.field')
+ * sqlite numeric:   CASE WHEN json_type(data, '$.field') IN ('integer', 'real')
+ *                     THEN json_extract(data, '$.field') END
+ * postgres text:    (data::jsonb)->>'field'
+ * postgres numeric: CASE WHEN jsonb_typeof((data::jsonb)->'field') = 'number'
+ *                     THEN ((data::jsonb)->>'field')::numeric END
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- accepts any Kysely instance
+export function pluginDataExtractExpr(
+	db: Kysely<any>,
+	field: string,
+	options?: { numeric?: boolean },
+): string {
+	validateJsonFieldName(field, "plugin storage field name");
+	if (isPostgres(db)) {
+		const text = `(data::jsonb)->>'${field}'`;
+		if (!options?.numeric) return text;
+		return `CASE WHEN jsonb_typeof((data::jsonb)->'${field}') = 'number' THEN (${text})::numeric END`;
+	}
+	const extract = `json_extract(data, '$.${field}')`;
+	if (!options?.numeric) return extract;
+	return `CASE WHEN json_type(data, '$.${field}') IN ('integer', 'real') THEN ${extract} END`;
+}
+
+/**
+ * SQL expression for ordering plugin-storage rows by a `data` field.
+ *
+ * `ORDER BY` has no bound operand to infer numeric-vs-text from, so extracting
+ * as text (`->>'field'`) would sort a numeric field lexically on Postgres
+ * (`[10, 100, 9]`) while SQLite's `json_extract` sorts it numerically —
+ * a cross-dialect divergence. Ordering over the **jsonb-native value**
+ * (`->'field'`, note the single arrow) fixes this: the jsonb btree ordering is
+ * numeric among numbers, lexical among strings, and total across heterogeneous
+ * values (it never throws). SQLite's `json_extract` already orders numerically,
+ * so it is unchanged.
+ *
+ * sqlite:   json_extract(data, '$.field')
+ * postgres: (data::jsonb)->'field'
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- accepts any Kysely instance
+export function pluginDataOrderExpr(db: Kysely<any>, field: string): string {
+	validateJsonFieldName(field, "plugin storage order field name");
+	if (isPostgres(db)) {
+		return `(data::jsonb)->'${field}'`;
+	}
+	return `json_extract(data, '$.${field}')`;
+}
