@@ -531,6 +531,167 @@ describe("Bridge Handler Conformance", () => {
 		});
 	});
 
+	// ── storage/batch (atomic multi-document) ─────────────────────────────
+	describe("storage/batch", () => {
+		function batchHandler() {
+			return makeHandler({ storageCollections: ["inventory", "reservations"] });
+		}
+
+		it("round-trips the ops array and applies a coupled decrement ∧ flip", async () => {
+			const handler = batchHandler();
+			await call(handler, "storage/put", {
+				collection: "inventory",
+				id: "widget",
+				data: { on_hand: 5 },
+			});
+			await call(handler, "storage/put", {
+				collection: "reservations",
+				id: "r1",
+				data: { state: "pending" },
+			});
+
+			const result = await call(handler, "storage/batch", {
+				ops: [
+					{
+						op: "updateIf",
+						collection: "inventory",
+						id: "widget",
+						where: { on_hand: { gte: 2 } },
+						delta: { on_hand: { dec: 2 } },
+					},
+					{
+						op: "updateIf",
+						collection: "reservations",
+						id: "r1",
+						where: { state: "pending" },
+						set: { state: "held" },
+					},
+				],
+			});
+
+			expect(result.result).toEqual({
+				applied: true,
+				results: [
+					{ op: "updateIf", applied: true, data: { on_hand: 3 } },
+					{ op: "updateIf", applied: true, data: { state: "held" } },
+				],
+			});
+			const inv = await call(handler, "storage/get", { collection: "inventory", id: "widget" });
+			expect(inv.result).toEqual({ on_hand: 3 });
+		});
+
+		it("guard-fail returns {applied:false, failedIndex, reason} and rolls back both ops", async () => {
+			const handler = batchHandler();
+			await call(handler, "storage/put", {
+				collection: "inventory",
+				id: "widget",
+				data: { on_hand: 1 },
+			});
+			await call(handler, "storage/put", {
+				collection: "reservations",
+				id: "r1",
+				data: { state: "pending" },
+			});
+
+			const result = await call(handler, "storage/batch", {
+				ops: [
+					{
+						op: "updateIf",
+						collection: "inventory",
+						id: "widget",
+						where: { on_hand: { gte: 2 } },
+						delta: { on_hand: { dec: 2 } },
+					},
+					{
+						op: "updateIf",
+						collection: "reservations",
+						id: "r1",
+						where: { state: "pending" },
+						set: { state: "held" },
+					},
+				],
+			});
+
+			expect(result.result).toEqual({ applied: false, failedIndex: 0, reason: "guard_failed" });
+			const inv = await call(handler, "storage/get", { collection: "inventory", id: "widget" });
+			expect(inv.result).toEqual({ on_hand: 1 });
+			const res = await call(handler, "storage/get", { collection: "reservations", id: "r1" });
+			expect(res.result).toEqual({ state: "pending" });
+		});
+
+		it("rejects an undeclared collection in ANY op — op 0 must NOT commit", async () => {
+			const handler = makeHandler({ storageCollections: ["inventory"] });
+			const result = await call(handler, "storage/batch", {
+				ops: [
+					{ op: "insert", collection: "inventory", id: "w1", data: { on_hand: 1 } },
+					{ op: "updateIf", collection: "secrets", id: "s1", where: {}, set: { a: 1 } },
+				],
+			});
+			expect(result.error).toContain("Storage collection not declared: secrets");
+			// Validation precedes execution → op 0 never inserted.
+			const inv = await call(handler, "storage/get", { collection: "inventory", id: "w1" });
+			expect(inv.result).toBeNull();
+		});
+
+		it("is scoped per plugin (a batch cannot touch another plugin's rows)", async () => {
+			const handlerA = createBridgeHandler({
+				pluginId: "plugin-a",
+				version: "1.0.0",
+				capabilities: [],
+				allowedHosts: [],
+				storageCollections: ["inventory"],
+				db,
+				emailSend: () => null,
+			});
+			const handlerB = createBridgeHandler({
+				pluginId: "plugin-b",
+				version: "1.0.0",
+				capabilities: [],
+				allowedHosts: [],
+				storageCollections: ["inventory"],
+				db,
+				emailSend: () => null,
+			});
+
+			await call(handlerA, "storage/put", {
+				collection: "inventory",
+				id: "shared-id",
+				data: { on_hand: 5 },
+			});
+			// Plugin B's batch inserts its OWN row at the same id; A's row is untouched.
+			const result = await call(handlerB, "storage/batch", {
+				ops: [{ op: "insert", collection: "inventory", id: "shared-id", data: { on_hand: 99 } }],
+			});
+			expect((result.result as { applied: boolean }).applied).toBe(true);
+			const a = await call(handlerA, "storage/get", { collection: "inventory", id: "shared-id" });
+			expect(a.result).toEqual({ on_hand: 5 });
+		});
+
+		it("throws a clean bridge error for malformed ops bodies", async () => {
+			const handler = batchHandler();
+			const notArray = await call(handler, "storage/batch", { ops: { nope: true } });
+			expect(notArray.error).toContain("must be an array");
+
+			const missingOp = await call(handler, "storage/batch", {
+				ops: [{ collection: "inventory", id: "x" }],
+			});
+			expect(missingOp.error).toContain("unknown op");
+		});
+
+		it("rejects a non-object set/delta up front (symmetric with the Cloudflare bridge)", async () => {
+			const handler = batchHandler();
+			const badSet = await call(handler, "storage/batch", {
+				ops: [{ op: "updateIf", collection: "inventory", id: "widget", where: {}, set: "nope" }],
+			});
+			expect(badSet.error).toContain("`set` must be an object");
+
+			const badDelta = await call(handler, "storage/batch", {
+				ops: [{ op: "updateIf", collection: "inventory", id: "widget", where: {}, delta: 5 }],
+			});
+			expect(badDelta.error).toContain("`delta` must be an object");
+		});
+	});
+
 	// ── Error Handling ────────────────────────────────────────────────────
 
 	describe("error handling", () => {

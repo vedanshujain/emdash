@@ -191,6 +191,82 @@ export interface UpdateIfArgs<T> {
 export type UpdateIfResult<T> = { applied: true; data: T } | { applied: false };
 
 /**
+ * A single operation in an atomic {@link StorageAccess.batch}.
+ *
+ * `insert` and `updateIf` reuse the exact `where` / `set` / `delta` shapes of
+ * the single-document {@link StorageCollection.insert} / `updateIf` primitives,
+ * so a `{ dec: n }` delta can never be mistaken for a wholesale set and the
+ * per-op float / both-in-set-and-delta guards apply identically.
+ */
+export interface BatchInsertOp<T = unknown> {
+	op: "insert";
+	collection: string;
+	id: string;
+	data: T;
+	/**
+	 * Idempotent-claim mode. When `true`, an already-present row (PK conflict,
+	 * `reason: "exists"`) does NOT fail the batch — the op is a satisfied no-op
+	 * and the batch proceeds. A real unique-index violation on a non-`id` field
+	 * STILL fails the batch. Default `false` (exists ⇒ the whole batch fails).
+	 */
+	ifNotExists?: boolean;
+}
+
+export interface BatchUpdateIfOp<T = unknown> {
+	op: "updateIf";
+	collection: string;
+	id: string;
+	/** Guard evaluated in-SQL; identical semantics to {@link UpdateIfArgs.where}. */
+	where: WhereClause;
+	/** Wholesale field values merged into the stored JSON document. */
+	set?: Partial<T>;
+	/** Per-field integer deltas applied in-SQL (`COALESCE(base, 0) ± n`). */
+	delta?: { [K in keyof T]?: NumericDelta };
+}
+
+/** A single op in a {@link StorageAccess.batch} — insert or guarded update. */
+export type BatchOp = BatchInsertOp | BatchUpdateIfOp;
+
+/**
+ * Per-op success result in a committed batch. `results[i]` corresponds to
+ * `ops[i]`.
+ */
+export type BatchOpResult =
+	| { op: "insert"; inserted: true }
+	| { op: "insert"; inserted: false; reason: "exists" }
+	| { op: "updateIf"; applied: true; data: unknown };
+
+/**
+ * Why a batch rolled back.
+ * - `guard_failed` — an `updateIf` op matched 0 rows (row absent OR guard false).
+ * - `exists` — an `insert` op hit a PK conflict and `ifNotExists` was not set.
+ * - `unique_violation` — an `insert` op hit a declared unique index on a non-`id`
+ *   field.
+ */
+export type BatchFailureReason = "guard_failed" | "exists" | "unique_violation";
+
+/**
+ * Result of an atomic {@link StorageAccess.batch}.
+ *
+ * Commits **iff** every op's guard passes; otherwise the WHOLE batch rolls back
+ * and reports the first failing op via `failedIndex` + `reason`. `conflictField`
+ * is populated for `unique_violation` (best-effort — single-field indexes).
+ *
+ * Guard / uniqueness *outcomes* are reported here, never thrown. Malformed ops
+ * (float delta, field in both `set` & `delta`, unknown op, empty ops array,
+ * `updateIf` with neither `set` nor `delta`) THROW — they are programmer errors.
+ * A raw DB error re-throws (never swallowed).
+ */
+export type BatchResult =
+	| { applied: true; results: BatchOpResult[] }
+	| {
+			applied: false;
+			failedIndex: number;
+			reason: BatchFailureReason;
+			conflictField?: string;
+	  };
+
+/**
  * Storage collection interface - the API exposed to plugins
  * No async iterators - all operations return promises with pagination
  */
@@ -227,6 +303,27 @@ export interface StorageCollection<T = unknown> {
 	 */
 	updateIf(id: string, args: UpdateIfArgs<T>): Promise<UpdateIfResult<T>>;
 }
+
+/**
+ * The storage **access** object handed to plugins as `ctx.storage`.
+ *
+ * It keeps the existing per-collection index signature (`ctx.storage.<coll>`)
+ * AND adds the cross-collection {@link StorageAccess.batch} primitive. Modeled
+ * as an intersection (`Record<string, StorageCollection> & { batch }`) rather
+ * than a single interface with a conflicting index signature — the same
+ * mixed-map shape the codebase uses elsewhere. A plugin collection literally
+ * named `batch` is rejected at declaration time (it would be shadowed by this
+ * method).
+ */
+export type StorageAccess = Record<string, StorageCollection> & {
+	/**
+	 * Apply several conditional writes (`insert` / `updateIf`) across multiple
+	 * documents and collections **all-or-nothing**: commits only if EVERY op's
+	 * guard passes, otherwise rolls back the whole batch and reports which op
+	 * failed. Atomic on Postgres, SQLite (better-sqlite3), and Cloudflare D1.
+	 */
+	batch(ops: BatchOp[]): Promise<BatchResult>;
+};
 
 /**
  * Plugin storage context - typed based on declared collections
@@ -546,8 +643,16 @@ export interface PluginContext<TStorage extends PluginStorageConfig = PluginStor
 		version: string;
 	};
 
-	/** Storage collections - only if plugin declares storage */
-	storage: PluginStorage<TStorage>;
+	/**
+	 * Storage collections plus the atomic {@link StorageAccess.batch} primitive.
+	 * Per-collection accessors (`ctx.storage.<coll>`) keep their declared-key
+	 * typing; `batch` is additive. Structurally equivalent to {@link StorageAccess}
+	 * (what the runtime builds) while preserving `TStorage` key typing for native
+	 * plugins.
+	 */
+	storage: PluginStorage<TStorage> & {
+		batch(ops: BatchOp[]): Promise<BatchResult>;
+	};
 
 	/** Key-value store for config and state */
 	kv: KVAccess;

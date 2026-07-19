@@ -14,8 +14,13 @@
  * must produce same outputs, same return shapes, same error messages.
  */
 
-import { createHttpAccess, createUnrestrictedHttpAccess, PluginStorageRepository } from "emdash";
-import type { Database, SandboxEmailSendCallback } from "emdash";
+import {
+	createHttpAccess,
+	createUnrestrictedHttpAccess,
+	PluginStorageRepository,
+	applyPluginStorageBatch,
+} from "emdash";
+import type { Database, SandboxEmailSendCallback, BatchOp } from "emdash";
 import { sql, type Kysely, type RawBuilder } from "kysely";
 
 /**
@@ -324,6 +329,11 @@ async function dispatch(
 				set: optionalRecord(body, "set"),
 				delta: optionalRecord(body, "delta"),
 			});
+		case "storage/batch":
+			// requireBatchOps validates every op's declared collection BEFORE any
+			// write (the anti-smuggling defense), so an undeclared collection in
+			// ANY op rejects the whole batch without executing op 0.
+			return storageBatch(opts, requireBatchOps(opts, body, "ops"));
 
 		// ── Logging ─────────────────────────────────────────────────────
 		case "log": {
@@ -533,6 +543,50 @@ function requireCapability(opts: BridgeHandlerOptions, capability: string): void
 		// Error message matches Cloudflare PluginBridge format
 		throw new Error(`Missing capability: ${capability}`);
 	}
+}
+
+/**
+ * Validate the `storage/batch` ops array. Asserts an array of well-formed ops
+ * AND calls `validateStorageCollection` for EVERY op's collection so a batch
+ * cannot smuggle a write to an undeclared collection. This runs BEFORE any
+ * execution, so a rejected op never lets earlier ops commit. Guard/uniqueness
+ * outcomes are NOT validated here — those are reported by `applyPluginStorageBatch`.
+ */
+function requireBatchOps(
+	opts: BridgeHandlerOptions,
+	body: Record<string, unknown>,
+	key: string,
+): BatchOp[] {
+	const value = body[key];
+	if (!Array.isArray(value)) {
+		throw new Error(`Parameter ${key} must be an array of batch ops`);
+	}
+	for (const op of value) {
+		if (!isRecord(op)) throw new Error("batch op must be an object");
+		if (op.op !== "insert" && op.op !== "updateIf") {
+			throw new Error(`batch op has unknown op: ${String(op.op)}`);
+		}
+		if (typeof op.collection !== "string") {
+			throw new Error("batch op requires a string collection");
+		}
+		if (typeof op.id !== "string") throw new Error("batch op requires a string id");
+		if (op.op === "updateIf") {
+			// Symmetric with the Cloudflare PluginBridge (same early errors) so both
+			// bridges reject malformed ops identically.
+			if (!isRecord(op.where)) {
+				throw new Error("storage/updateIf requires an object `where`");
+			}
+			if (op.set !== undefined && !isRecord(op.set)) {
+				throw new Error("storage/updateIf `set` must be an object when provided");
+			}
+			if (op.delta !== undefined && !isRecord(op.delta)) {
+				throw new Error("storage/updateIf `delta` must be an object when provided");
+			}
+		}
+		validateStorageCollection(opts, op.collection);
+	}
+	// eslint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- each entry validated above (op ∈ {insert,updateIf}, string collection/id); applyPluginStorageBatch re-validates set/delta shapes and reports guard outcomes.
+	return value as BatchOp[];
 }
 
 function validateStorageCollection(opts: BridgeHandlerOptions, collection: string): void {
@@ -1659,4 +1713,14 @@ async function storageUpdateIf(
 		set: args.set,
 		delta: args.delta,
 	});
+}
+
+/**
+ * Apply an atomic multi-document batch. This workerd path is NEVER a D1 Kysely
+ * (`opts.db` is always the host Postgres / better-sqlite3 connection — verified),
+ * so it goes through the real-transaction `applyPluginStorageBatch`, producing
+ * the same `BatchResult` shape as the Cloudflare D1 bridge.
+ */
+async function storageBatch(opts: BridgeHandlerOptions, ops: BatchOp[]): Promise<unknown> {
+	return applyPluginStorageBatch(opts.db, opts.pluginId, ops);
 }

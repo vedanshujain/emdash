@@ -22,7 +22,10 @@ export {
 	createPluginStorageAccessor,
 	deleteAllPluginStorage,
 	deletePluginCollection,
+	applyPluginStorageBatch,
+	applyPluginStorageBatchD1,
 } from "./plugin-storage.js";
+export type { D1BatchBinding, D1BatchStatement } from "./plugin-storage.js";
 export { MenuGoneError, MenuRepository } from "./menu.js";
 export type {
 	Menu,

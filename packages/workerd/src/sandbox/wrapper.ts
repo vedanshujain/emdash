@@ -110,6 +110,9 @@ function createContext() {
 	const storage = new Proxy({}, {
 		get(_, collectionName) {
 			if (typeof collectionName !== "string") return undefined;
+			// "batch" is the cross-collection atomic primitive on the storage
+			// access object, not a per-collection accessor.
+			if (collectionName === "batch") return (ops) => bridgeCall("storage/batch", { ops });
 			return createStorageCollection(collectionName);
 		}
 	});
