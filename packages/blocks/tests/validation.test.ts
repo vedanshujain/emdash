@@ -1,6 +1,38 @@
 import { describe, expect, it } from "vitest";
 
+import { blocks } from "../src/builders.js";
+import type { Block } from "../src/types.js";
 import { validateBlocks } from "../src/validation.js";
+
+/** One block per builder, so a builder added without validation support fails below. */
+const builtBlocks: Record<keyof typeof blocks, Block> = {
+	header: blocks.header("Settings"),
+	section: blocks.section("Body text"),
+	divider: blocks.divider(),
+	fields: blocks.fields([{ label: "Status", value: "Active" }]),
+	table: blocks.table({
+		columns: [{ key: "name", label: "Name" }],
+		rows: [{ name: "Alice" }],
+		pageActionId: "page",
+	}),
+	actions: blocks.actions([{ type: "button", action_id: "save", label: "Save" }]),
+	stats: blocks.stats([{ label: "Posts", value: 12 }]),
+	form: blocks.form({
+		fields: [{ type: "text_input", action_id: "name", label: "Name" }],
+		submit: { label: "Save", actionId: "save" },
+	}),
+	image: blocks.image({ url: "https://example.com/a.png", alt: "A" }),
+	context: blocks.context("Muted help text"),
+	columns: blocks.columns([[{ type: "divider" }], [{ type: "divider" }]]),
+	timeseriesChart: blocks.timeseriesChart({ series: [{ name: "Views", data: [[0, 1]] }] }),
+	customChart: blocks.customChart({ options: {} }),
+	banner: blocks.banner({ title: "Heads up" }),
+	meter: blocks.meter({ label: "Usage", value: 40 }),
+	code: blocks.code({ code: "const a = 1;", language: "ts" }),
+	tab: blocks.tab([{ label: "General", blocks: [{ type: "divider" }] }]),
+	empty: blocks.empty({ title: "Nothing here" }),
+	accordion: blocks.accordion({ label: "Advanced", blocks: [{ type: "divider" }] }),
+};
 
 describe("validateBlocks", () => {
 	// ── Valid blocks ─────────────────────────────────────────────────────────
@@ -133,6 +165,27 @@ describe("validateBlocks", () => {
 		it("accordion with empty blocks array", () => {
 			const result = validateBlocks([{ type: "accordion", label: "Empty", blocks: [] }]);
 			expect(result).toEqual({ valid: true, errors: [] });
+		});
+
+		it("tab", () => {
+			const result = validateBlocks([
+				{
+					type: "tab",
+					default_tab: 1,
+					panels: [
+						{ label: "General", blocks: [{ type: "section", text: "General settings" }] },
+						{ label: "Advanced", blocks: [{ type: "divider" }] },
+					],
+				},
+			]);
+			expect(result).toEqual({ valid: true, errors: [] });
+		});
+
+		it("every block the builders produce", () => {
+			for (const [name, block] of Object.entries(builtBlocks)) {
+				const result = validateBlocks([block]);
+				expect(result.errors, `blocks.${name}`).toEqual([]);
+			}
 		});
 
 		it("repeater", () => {
@@ -499,6 +552,39 @@ describe("validateBlocks", () => {
 			]);
 			expect(result.valid).toBe(false);
 			expect(result.errors[0]!.path).toBe("blocks[0].default_open");
+		});
+
+		it("tab missing panels", () => {
+			const result = validateBlocks([{ type: "tab" }]);
+			expect(result.valid).toBe(false);
+			expect(result.errors.map((e) => e.path)).toContain("blocks[0].panels");
+		});
+
+		it("tab panel missing label or blocks", () => {
+			const result = validateBlocks([{ type: "tab", panels: [{}] }]);
+			expect(result.valid).toBe(false);
+			const paths = result.errors.map((e) => e.path);
+			expect(paths).toContain("blocks[0].panels[0].label");
+			expect(paths).toContain("blocks[0].panels[0].blocks");
+		});
+
+		it("tab with invalid nested blocks reports correct path", () => {
+			const result = validateBlocks([
+				{
+					type: "tab",
+					panels: [{ label: "General", blocks: [{ type: "header" }] }],
+				},
+			]);
+			expect(result.valid).toBe(false);
+			expect(result.errors[0]!.path).toBe("blocks[0].panels[0].blocks[0].text");
+		});
+
+		it("tab with non-numeric default_tab", () => {
+			const result = validateBlocks([
+				{ type: "tab", panels: [{ label: "General", blocks: [] }], default_tab: "1" },
+			]);
+			expect(result.valid).toBe(false);
+			expect(result.errors[0]!.path).toBe("blocks[0].default_tab");
 		});
 
 		it("stats item missing label or value", () => {
