@@ -137,6 +137,31 @@ function validateConfirmDialog(value: unknown, path: string, errors: ValidationE
 	}
 }
 
+function validateTableRowAction(value: unknown, path: string, errors: ValidationError[]): void {
+	if (!isRecord(value)) {
+		errors.push({ path, message: "Field 'row_action' must be an object if provided" });
+		return;
+	}
+	if (typeof value.action_id !== "string") {
+		errors.push({
+			path: `${path}.action_id`,
+			message: "Required field 'action_id' must be a string",
+		});
+	}
+	if (value.value_key !== undefined && typeof value.value_key !== "string") {
+		errors.push({
+			path: `${path}.value_key`,
+			message: "Field 'value_key' must be a string if provided",
+		});
+	}
+	if (value.label !== undefined && typeof value.label !== "string") {
+		errors.push({
+			path: `${path}.label`,
+			message: "Field 'label' must be a string if provided",
+		});
+	}
+}
+
 function validateElement(value: unknown, path: string, errors: ValidationError[]): void {
 	if (!isRecord(value)) {
 		errors.push({ path, message: "Element must be an object" });
@@ -900,6 +925,9 @@ function validateBlock(value: unknown, path: string, errors: ValidationError[]):
 					path: `${path}.empty_text`,
 					message: "Field 'empty_text' must be a string if provided",
 				});
+			}
+			if (value.row_action !== undefined) {
+				validateTableRowAction(value.row_action, `${path}.row_action`, errors);
 			}
 			break;
 		}

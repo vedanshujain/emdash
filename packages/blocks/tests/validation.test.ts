@@ -284,6 +284,63 @@ describe("validateBlocks", () => {
 			expect(result.errors[0]!.message).toContain("format");
 		});
 
+		it("table row_action accepts action_id with optional value_key and label", () => {
+			const result = validateBlocks([
+				{
+					type: "table",
+					columns: [{ key: "k", label: "K" }],
+					rows: [{ k: "v" }],
+					page_action_id: "p",
+					row_action: { action_id: "open", value_key: "id", label: "Open" },
+				},
+			]);
+			expect(result.valid).toBe(true);
+		});
+
+		it("table row_action missing action_id", () => {
+			const result = validateBlocks([
+				{
+					type: "table",
+					columns: [{ key: "k", label: "K" }],
+					rows: [],
+					page_action_id: "p",
+					row_action: { value_key: "id" },
+				},
+			]);
+			expect(result.valid).toBe(false);
+			expect(result.errors[0]!.path).toBe("blocks[0].row_action.action_id");
+		});
+
+		it("table row_action with wrong types", () => {
+			const result = validateBlocks([
+				{
+					type: "table",
+					columns: [{ key: "k", label: "K" }],
+					rows: [],
+					page_action_id: "p",
+					row_action: { action_id: "open", value_key: 1, label: false },
+				},
+			]);
+			expect(result.valid).toBe(false);
+			const paths = result.errors.map((e) => e.path);
+			expect(paths).toContain("blocks[0].row_action.value_key");
+			expect(paths).toContain("blocks[0].row_action.label");
+		});
+
+		it("table row_action must be an object", () => {
+			const result = validateBlocks([
+				{
+					type: "table",
+					columns: [{ key: "k", label: "K" }],
+					rows: [],
+					page_action_id: "p",
+					row_action: "open",
+				},
+			]);
+			expect(result.valid).toBe(false);
+			expect(result.errors[0]!.path).toBe("blocks[0].row_action");
+		});
+
 		it("form missing fields or submit", () => {
 			const result = validateBlocks([{ type: "form" }]);
 			expect(result.valid).toBe(false);

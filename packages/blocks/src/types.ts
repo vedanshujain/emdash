@@ -194,6 +194,23 @@ export interface TableColumn {
 	sortable?: boolean;
 }
 
+/**
+ * Makes the rows of a `table` block activatable. Each row renders an activation
+ * control and the row itself becomes clickable; activating a row dispatches a
+ * `block_action` with `action_id` and the row's identity as `value`.
+ */
+export interface TableRowAction {
+	action_id: string;
+	/**
+	 * Row property holding the row's identity, sent as the interaction `value`.
+	 * It need not be a displayed column. Rows where it is absent or nullish are
+	 * not activatable. Omit to send the whole row object as the value.
+	 */
+	value_key?: string;
+	/** Label for the activation control. Defaults to "Open". */
+	label?: string;
+}
+
 export interface StatItem {
 	label: string;
 	value: string | number;
@@ -275,6 +292,7 @@ export interface TableBlock extends BlockBase {
 	next_cursor?: string;
 	page_action_id: string;
 	empty_text?: string;
+	row_action?: TableRowAction;
 }
 
 export interface ActionsBlock extends BlockBase {

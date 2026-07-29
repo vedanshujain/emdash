@@ -34,6 +34,7 @@ import type {
 	StatsBlock,
 	TableBlock,
 	TableColumn,
+	TableRowAction,
 	TextInputElement,
 	ToggleElement,
 	TabBlock,
@@ -84,6 +85,7 @@ function table(opts: {
 	nextCursor?: string;
 	pageActionId: string;
 	emptyText?: string;
+	rowAction?: TableRowAction;
 }): TableBlock {
 	return {
 		type: "table",
@@ -92,6 +94,7 @@ function table(opts: {
 		page_action_id: opts.pageActionId,
 		...(opts.nextCursor !== undefined && { next_cursor: opts.nextCursor }),
 		...(opts.emptyText !== undefined && { empty_text: opts.emptyText }),
+		...(opts.rowAction !== undefined && { row_action: opts.rowAction }),
 		...(opts.blockId !== undefined && { block_id: opts.blockId }),
 	};
 }

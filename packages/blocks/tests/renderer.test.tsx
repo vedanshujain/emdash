@@ -15,8 +15,14 @@ const CollapsibleContext = React.createContext<{
 }>({});
 
 vi.mock("@cloudflare/kumo", () => ({
-	Button: ({ children, onClick, variant, type }: any) => (
-		<button onClick={onClick} data-variant={variant} type={type || "button"}>
+	Button: ({ children, onClick, variant, type, size, ...rest }: any) => (
+		<button
+			onClick={onClick}
+			data-variant={variant}
+			data-size={size}
+			type={type || "button"}
+			{...rest}
+		>
 			{children}
 		</button>
 	),
@@ -377,6 +383,166 @@ describe("BlockRenderer", () => {
 		]);
 		expect(screen.getByTestId("badge")).toBeTruthy();
 		expect(screen.getByTestId("badge").textContent).toBe("Active");
+	});
+
+	it("table without row_action has no activation control and ignores row clicks", () => {
+		const onAction = vi.fn();
+		const { container } = renderBlocks(
+			[
+				{
+					type: "table",
+					columns: [
+						{ key: "name", label: "Name" },
+						{ key: "role", label: "Role" },
+					],
+					rows: [{ id: "u_1", name: "Alice", role: "Admin" }],
+					page_action_id: "page",
+				},
+			],
+			onAction,
+		);
+
+		expect(screen.getAllByRole("columnheader")).toHaveLength(2);
+		expect(container.querySelectorAll("tbody td")).toHaveLength(2);
+		expect(screen.queryByRole("button")).toBeNull();
+
+		const row = container.querySelector("tbody tr");
+		fireEvent.click(row!);
+		expect(onAction).not.toHaveBeenCalled();
+		expect(row?.className).not.toContain("cursor-pointer");
+	});
+
+	it("table row_action fires the row's identity from value_key on row click", () => {
+		const onAction = vi.fn();
+		const { container } = renderBlocks(
+			[
+				{
+					type: "table",
+					block_id: "orders",
+					columns: [{ key: "name", label: "Name" }],
+					rows: [
+						{ id: "u_1", name: "Alice" },
+						{ id: "u_2", name: "Bob" },
+					],
+					page_action_id: "page",
+					row_action: { action_id: "open_user", value_key: "id" },
+				},
+			],
+			onAction,
+		);
+
+		fireEvent.click(container.querySelectorAll("tbody tr")[1]!);
+
+		expect(onAction).toHaveBeenCalledTimes(1);
+		expect(onAction).toHaveBeenCalledWith({
+			type: "block_action",
+			action_id: "open_user",
+			block_id: "orders",
+			value: "u_2",
+		});
+	});
+
+	it("table row_action without value_key sends the whole row", () => {
+		const onAction = vi.fn();
+		const { container } = renderBlocks(
+			[
+				{
+					type: "table",
+					columns: [{ key: "name", label: "Name" }],
+					rows: [{ name: "Alice", tier: "pro" }],
+					page_action_id: "page",
+					row_action: { action_id: "open_user" },
+				},
+			],
+			onAction,
+		);
+
+		fireEvent.click(container.querySelector("tbody tr")!);
+
+		expect(onAction).toHaveBeenCalledWith({
+			type: "block_action",
+			action_id: "open_user",
+			block_id: undefined,
+			value: { name: "Alice", tier: "pro" },
+		});
+	});
+
+	it("table row_action control is keyboard focusable and fires once when activated", () => {
+		const onAction = vi.fn();
+		renderBlocks(
+			[
+				{
+					type: "table",
+					columns: [{ key: "name", label: "Name" }],
+					rows: [{ id: "u_1", name: "Alice" }],
+					page_action_id: "page",
+					row_action: { action_id: "open_user", value_key: "id", label: "View" },
+				},
+			],
+			onAction,
+		);
+
+		const control = screen.getByRole("button", { name: "View Alice" });
+		control.focus();
+		expect(document.activeElement).toBe(control);
+
+		fireEvent.click(document.activeElement!);
+
+		expect(onAction).toHaveBeenCalledTimes(1);
+		expect(onAction).toHaveBeenCalledWith({
+			type: "block_action",
+			action_id: "open_user",
+			block_id: undefined,
+			value: "u_1",
+		});
+	});
+
+	it("table row_action labels its column header and skips rows with no identity", () => {
+		const onAction = vi.fn();
+		const { container } = renderBlocks(
+			[
+				{
+					type: "table",
+					columns: [{ key: "name", label: "Name" }],
+					rows: [{ name: "Alice" }],
+					page_action_id: "page",
+					row_action: { action_id: "open_user", value_key: "id" },
+				},
+			],
+			onAction,
+		);
+
+		expect(screen.getByRole("columnheader", { name: "Open" })).toBeTruthy();
+		expect(screen.queryByRole("button")).toBeNull();
+
+		fireEvent.click(container.querySelector("tbody tr")!);
+		expect(onAction).not.toHaveBeenCalled();
+	});
+
+	it("table sort header click does not fire the row action", () => {
+		const onAction = vi.fn();
+		renderBlocks(
+			[
+				{
+					type: "table",
+					columns: [{ key: "name", label: "Name", sortable: true }],
+					rows: [{ id: "u_1", name: "Alice" }],
+					page_action_id: "page",
+					row_action: { action_id: "open_user", value_key: "id" },
+				},
+			],
+			onAction,
+		);
+
+		fireEvent.click(screen.getByText("Name"));
+
+		expect(onAction).toHaveBeenCalledTimes(1);
+		expect(onAction).toHaveBeenCalledWith({
+			type: "block_action",
+			action_id: "page",
+			block_id: undefined,
+			value: { sort: { key: "name", dir: "asc" } },
+		});
 	});
 
 	it("actions block renders buttons horizontally", () => {
