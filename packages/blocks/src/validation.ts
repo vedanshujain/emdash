@@ -269,6 +269,12 @@ function validateElement(value: unknown, path: string, errors: ValidationError[]
 			if (value.initial_value !== undefined) {
 				validateInitialValueInOptions(value.initial_value, selectValidValues, path, errors);
 			}
+			if (value.placeholder !== undefined && typeof value.placeholder !== "string") {
+				errors.push({
+					path: `${path}.placeholder`,
+					message: "Field 'placeholder' must be a string",
+				});
+			}
 			break;
 		}
 		case "toggle": {

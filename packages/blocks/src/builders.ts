@@ -210,7 +210,7 @@ function select(
 	actionId: string,
 	label: string,
 	options: Array<{ label: string; value: string }>,
-	opts?: { initialValue?: string },
+	opts?: { initialValue?: string; placeholder?: string },
 ): SelectElement {
 	return {
 		type: "select",
@@ -220,6 +220,7 @@ function select(
 		...(opts?.initialValue !== undefined && {
 			initial_value: opts.initialValue,
 		}),
+		...(opts?.placeholder !== undefined && { placeholder: opts.placeholder }),
 	};
 }
 

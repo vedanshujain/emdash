@@ -335,6 +335,25 @@ describe("validateBlocks", () => {
 			expect(result.errors[0]!.message).toContain("must not be empty");
 		});
 
+		it("select with non-string placeholder", () => {
+			const result = validateBlocks([
+				{
+					type: "actions",
+					elements: [
+						{
+							type: "select",
+							action_id: "sel",
+							label: "Pick",
+							options: [{ label: "One", value: "1" }],
+							placeholder: 42,
+						},
+					],
+				},
+			]);
+			expect(result.valid).toBe(false);
+			expect(result.errors[0]!.path).toBe("blocks[0].elements[0].placeholder");
+		});
+
 		it("select option missing label/value", () => {
 			const result = validateBlocks([
 				{

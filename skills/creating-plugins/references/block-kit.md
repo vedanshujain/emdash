@@ -83,13 +83,17 @@ routes: {
 | `button`       | Action button with optional confirmation dialog |
 | `text_input`   | Single-line or multiline text input             |
 | `number_input` | Numeric input with min/max                      |
-| `select`       | Dropdown select                                 |
+| `select`       | Dropdown select with optional `placeholder`     |
 | `toggle`       | On/off switch                                   |
 | `secret_input` | Masked input for API keys and tokens            |
 | `checkbox`     | Multi-select checkboxes                         |
 | `radio`        | Single-select radio buttons                     |
 | `date_input`   | Date picker                                     |
 | `combobox`     | Searchable dropdown select                      |
+
+A `select` renders the label of the selected option. When nothing is selected it renders its
+`placeholder`, which defaults to the label of an option whose `value` is `""` (the usual "All"
+entry) and otherwise to `Select...`.
 
 ## Block Syntax
 
