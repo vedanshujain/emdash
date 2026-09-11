@@ -99,9 +99,13 @@ The route handler takes two arguments: `routeCtx` (with `input`, `request`, `req
 | `button`        | Action button with optional confirmation dialog |
 | `text_input`    | Single-line or multiline text input          |
 | `number_input`  | Numeric input with min/max                   |
-| `select`        | Dropdown select                              |
+| `select`        | Dropdown select with optional `placeholder`  |
 | `toggle`        | On/off switch                                |
 | `secret_input`  | Masked input for API keys and tokens         |
+
+A `select` renders the label of the selected option. When nothing is selected it renders its
+`placeholder`, which defaults to the label of an option whose `value` is `""` (the usual "All"
+entry) and otherwise to `Select...`.
 
 ## Builder helpers
 

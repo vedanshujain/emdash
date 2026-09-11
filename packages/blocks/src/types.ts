@@ -43,6 +43,11 @@ export interface SelectElement {
 	label: string;
 	options: Array<{ label: string; value: string }>;
 	initial_value?: string;
+	/**
+	 * Text shown in the trigger when nothing is selected. Defaults to the label of
+	 * an option whose `value` is `""`, or `"Select..."`.
+	 */
+	placeholder?: string;
 	/** Plugin route that returns `{ items: Array<{ id, name }> }` to populate options dynamically */
 	optionsRoute?: string;
 }
