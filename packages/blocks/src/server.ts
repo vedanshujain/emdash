@@ -25,6 +25,7 @@ export type {
 	FormField,
 	// Block sub-types
 	TableColumn,
+	TableRowAction,
 	StatItem,
 	// Blocks
 	HeaderBlock,
