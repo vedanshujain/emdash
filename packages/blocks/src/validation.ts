@@ -14,6 +14,7 @@ const BLOCK_TYPES = new Set([
 	"banner",
 	"meter",
 	"code",
+	"tab",
 	"empty",
 	"accordion",
 ]);
@@ -1096,6 +1097,48 @@ function validateBlock(value: unknown, path: string, errors: ValidationError[]):
 				errors.push({
 					path: `${path}.language`,
 					message: `Field 'language' must be one of: ${[...CODE_LANGUAGES].join(", ")}`,
+				});
+			}
+			break;
+		}
+		case "tab": {
+			if (!Array.isArray(value.panels)) {
+				errors.push({
+					path: `${path}.panels`,
+					message: "Required field 'panels' must be an array",
+				});
+			} else {
+				for (let i = 0; i < value.panels.length; i++) {
+					const panel = value.panels[i] as unknown;
+					if (!isRecord(panel)) {
+						errors.push({
+							path: `${path}.panels[${i}]`,
+							message: "Panel must be an object",
+						});
+						continue;
+					}
+					if (typeof panel.label !== "string") {
+						errors.push({
+							path: `${path}.panels[${i}].label`,
+							message: "Required field 'label' must be a string",
+						});
+					}
+					if (!Array.isArray(panel.blocks)) {
+						errors.push({
+							path: `${path}.panels[${i}].blocks`,
+							message: "Required field 'blocks' must be an array",
+						});
+					} else {
+						for (let j = 0; j < panel.blocks.length; j++) {
+							validateBlock(panel.blocks[j], `${path}.panels[${i}].blocks[${j}]`, errors);
+						}
+					}
+				}
+			}
+			if (value.default_tab !== undefined && typeof value.default_tab !== "number") {
+				errors.push({
+					path: `${path}.default_tab`,
+					message: "Field 'default_tab' must be a number if provided",
 				});
 			}
 			break;
