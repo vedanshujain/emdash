@@ -199,7 +199,9 @@ export async function applySeed(
 						routable: collection.routable,
 						hidden: collection.hidden,
 						sortOrder: collection.sortOrder,
+						group: collection.group,
 						commentsEnabled: collection.commentsEnabled,
+						editLocking: collection.editLocking,
 					});
 					result.collections.updated++;
 
@@ -277,7 +279,9 @@ export async function applySeed(
 					routable: collection.routable,
 					hidden: collection.hidden,
 					sortOrder: collection.sortOrder,
+					group: collection.group,
 					commentsEnabled: collection.commentsEnabled,
+					editLocking: collection.editLocking,
 				},
 				fields,
 			);

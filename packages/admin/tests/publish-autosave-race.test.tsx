@@ -559,6 +559,7 @@ describe("ContentEditPage publish and autosave ordering", () => {
 				])?.data,
 			).toMatchObject({ title: "After schedule" });
 		});
+		await expect.element(screen.getByRole("button", { name: "Saved", exact: true })).toBeDisabled();
 
 		const scheduled = screen.getByRole("button", { name: "Scheduled update", exact: true });
 		await expect.element(scheduled).toBeVisible();
@@ -569,6 +570,10 @@ describe("ContentEditPage publish and autosave ordering", () => {
 		await vi.waitFor(() => {
 			expect(server!.requests.filter((request) => request.method === "DELETE")).toHaveLength(1);
 		});
+		await expect
+			.element(screen.getByRole("button", { name: "Publish changes", exact: true }))
+			.toBeEnabled();
+		expect(server.requests.filter((request) => request.method === "PUT")).toHaveLength(2);
 
 		await screen.getByRole("textbox", { name: "Title" }).fill("After unschedule");
 		await vi.advanceTimersByTimeAsync(2000);
@@ -742,7 +747,11 @@ describe("ContentEditPage publish and autosave ordering", () => {
 		fireEvent.click(dialog.getByRole("button", { name: "Save schedule", exact: true }).element());
 		await vi.advanceTimersByTimeAsync(0);
 		await vi.waitFor(() => {
-			expect(server!.requests.filter((request) => request.method === "POST")).toHaveLength(1);
+			expect(
+				server!.requests.filter(
+					(request) => request.method === "POST" && request.url.includes("/schedule"),
+				),
+			).toHaveLength(1);
 		});
 
 		fireEvent.click(scheduled.element());
@@ -754,7 +763,9 @@ describe("ContentEditPage publish and autosave ordering", () => {
 			server.requests
 				.filter(
 					(request) =>
-						request.method === "PUT" || request.method === "POST" || request.method === "DELETE",
+						request.method === "PUT" ||
+						((request.method === "POST" || request.method === "DELETE") &&
+							request.url.includes("/schedule")),
 				)
 				.map(({ method }) => method),
 		).toEqual(["POST", "DELETE"]);

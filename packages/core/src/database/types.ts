@@ -433,12 +433,14 @@ export interface CollectionTable {
 	date_field: string | null; // field slug (datetime) for the admin list Date column (NULL = default)
 	url_pattern: string | null; // URL pattern with {slug} placeholder (e.g. "/blog/{slug}")
 	routable: Generated<number>; // 0 or 1 — published entries require a slug when enabled
-	hidden: Generated<number>; // 0 or 1 — omit the auto-generated admin sidebar entry
+	hidden: Generated<number>; // 0 or 1 — omit the auto-generated sidebar entry and dashboard quick action
 	sort_order: number | null; // explicit admin sidebar position; NULL = alphabetical fallback
+	nav_group: string | null; // admin sidebar folder label; NULL = inline
 	comments_enabled: Generated<number>; // 0 or 1
 	comments_moderation: Generated<string>; // 'all' | 'first_time' | 'none'
 	comments_closed_after_days: Generated<number>; // 0 = never close
 	comments_auto_approve_users: Generated<number>; // 0 or 1
+	edit_locking: Generated<number>; // 0 or 1; take an edit lock when an entry is opened
 	created_at: Generated<string>;
 	updated_at: Generated<string>;
 }
@@ -686,6 +688,7 @@ export interface Database {
 	_emdash_relations: RelationTable;
 	_emdash_content_references: ContentReferenceTable;
 	_emdash_rate_limits: RateLimitTable;
+	_emdash_entry_locks: EntryLockTable;
 }
 
 export type MediaRow = {
@@ -859,4 +862,13 @@ export interface RateLimitTable {
 	key: string; // {ip}:{endpoint}
 	window: string; // ISO timestamp truncated to window size
 	count: number;
+}
+
+export interface EntryLockTable {
+	collection: string;
+	entry_id: string; // ID in the ec_* table
+	user_id: string;
+	token: string; // identifies the holder's editing session, one per tab
+	acquired_at: string; // ISO 8601 with milliseconds
+	expires_at: string; // ISO 8601 with milliseconds
 }
