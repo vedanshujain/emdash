@@ -7,7 +7,6 @@ import type {
 	ConditionalDeleteResult,
 	ConditionalWriteResult,
 	ContentCreateOptions,
-	NumericDelta,
 	UpdateIfArgs,
 	UpdateIfResult,
 	VersionedValue,
