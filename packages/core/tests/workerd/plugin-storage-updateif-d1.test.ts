@@ -30,6 +30,8 @@ beforeAll(async () => {
 		.addColumn("data", "text", (column) => column.notNull())
 		.addColumn("created_at", "text", (column) => column.notNull().defaultTo("2026-01-01"))
 		.addColumn("updated_at", "text", (column) => column.notNull())
+		// Merged in from #2980: every plugin-storage write assigns a revision.
+		.addColumn("revision", "text", (column) => column.notNull().defaultTo("0"))
 		.addPrimaryKeyConstraint("pk_plugin_storage", ["plugin_id", "collection", "id"])
 		.execute();
 });

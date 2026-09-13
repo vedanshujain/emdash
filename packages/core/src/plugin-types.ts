@@ -297,3 +297,9 @@ export type {
 	PluginContext,
 	UninstallEvent,
 };
+
+export type {
+	VersionedValue,
+	ConditionalWriteResult,
+	ConditionalDeleteResult,
+} from "./plugins/types.js";

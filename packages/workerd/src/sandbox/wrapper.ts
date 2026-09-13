@@ -222,6 +222,9 @@ function createContext() {
 	const kv = {
 		get: (key) => bridgeCall("kv/get", { key }),
 		set: (key, value) => bridgeCall("kv/set", { key, value }),
+		getVersioned: (key) => bridgeCall("kv/getVersioned", { key }),
+		compareAndSet: (key, expectedRevision, value) => bridgeCall("kv/compareAndSet", { key, expectedRevision, value }),
+		compareAndDelete: (key, expectedRevision) => bridgeCall("kv/compareAndDelete", { key, expectedRevision }),
 		delete: (key) => bridgeCall("kv/delete", { key }),
 		list: (prefix) => bridgeCall("kv/list", { prefix }),
 	};
@@ -234,6 +237,9 @@ function createContext() {
 				if (typeof id !== "string") throw new TypeError("Storage ID must be a string");
 				return bridgeCall("storage/updateIf", { collection: collectionName, id, args: marshalStorageUpdate(args) });
 			},
+			getVersioned: (id) => bridgeCall("storage/getVersioned", { collection: collectionName, id }),
+			compareAndSet: (id, expectedRevision, data) => bridgeCall("storage/compareAndSet", { collection: collectionName, id, expectedRevision, data }),
+			compareAndDelete: (id, expectedRevision) => bridgeCall("storage/compareAndDelete", { collection: collectionName, id, expectedRevision }),
 			delete: (id) => bridgeCall("storage/delete", { collection: collectionName, id }),
 			exists: async (id) => (await bridgeCall("storage/get", { collection: collectionName, id })) !== null,
 			query: (opts) => bridgeCall("storage/query", { collection: collectionName, ...opts }),
